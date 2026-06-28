@@ -1195,8 +1195,8 @@ function TopUp({ credits, onClose, onBuy }: { credits: number; onClose: () => vo
 /* ----------------------------------------------------------------------------
    Settings sheet
    ---------------------------------------------------------------------------- */
-function Settings({ handle, anon, notif, onToggleNotif, onClose, onSignOut }: {
-  handle: string; anon: boolean; notif: boolean; onToggleNotif: () => void; onClose: () => void; onSignOut: () => void;
+function Settings({ handle, anon, notif, onToggleNotif, onClose, onSignOut, place, onOpenLocation }: {
+  handle: string; anon: boolean; notif: boolean; onToggleNotif: () => void; onClose: () => void; onSignOut: () => void; place: string; onOpenLocation: () => void;
 }) {
   const Row = ({ label, value, danger, onClick }: { label: string; value: string; danger?: boolean; onClick?: () => void }) => (
     <button onClick={onClick} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "15px 16px", marginBottom: 8, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, cursor: onClick ? "pointer" : "default", color: danger ? C.red : C.text, fontFamily: FONT, fontSize: 14 }}>
@@ -1204,11 +1204,12 @@ function Settings({ handle, anon, notif, onToggleNotif, onClose, onSignOut }: {
       <span style={{ fontFamily: MONO, fontSize: 12, color: C.dim }}>{value}</span>
     </button>
   );
+  const locationLabel = place.startsWith("Near me") ? place.replace("Near me · ", "") : place;
   return (
     <Sheet onClose={onClose}>
       <div style={{ fontSize: 20, fontWeight: 750, color: C.text, marginBottom: 16 }}>Settings</div>
       <Row label="Handle" value={anon ? "anonymous" : `@${handle}`} />
-      <Row label="Location" value="Orlando · on" />
+      <Row label="Location" value={`${locationLabel} ▾`} onClick={onOpenLocation} />
       <button onClick={onToggleNotif} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "15px 16px", marginBottom: 8, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, cursor: "pointer", color: C.text, fontFamily: FONT, fontSize: 14 }}>
         <span>Reply notifications</span>
         <span style={{ width: 42, height: 24, borderRadius: 99, background: notif ? C.green : C.line, position: "relative", transition: "background .2s" }}>
@@ -1829,7 +1830,7 @@ export default function Nearhum() {
       {dropOpen && <DropSheet onClose={() => setDropOpen(false)} onDrop={dropPing} credits={credits} handle={myHandle} uid={auth.currentUser?.uid ?? ""} place={place} lat={myCoords?.lat ?? null} lng={myCoords?.lng ?? null} />}
       {topupOpen && <TopUp credits={credits} onClose={() => setTopupOpen(false)} onBuy={buy} />}
       {locOpen && <LocationSheet place={place} onClose={() => setLocOpen(false)} onPick={(p) => { setPlace(p); setLocOpen(false); setIdx(0); setProgress(0); flash(p.startsWith("Near me") ? "Back to your block" : `Tuned in to ${p}`); }} />}
-      {settingsOpen && <Settings handle={myHandle} anon={myHandle === "—"} notif={notif} onToggleNotif={() => setNotif((v) => !v)} onClose={() => setSettingsOpen(false)} onSignOut={async () => { await signOut(auth); setMyHandle("—"); setSettingsOpen(false); setOnboarded(false); }} />}
+      {settingsOpen && <Settings handle={myHandle} anon={myHandle === "—"} notif={notif} onToggleNotif={() => setNotif((v) => !v)} onClose={() => setSettingsOpen(false)} onSignOut={async () => { await signOut(auth); setMyHandle("—"); setSettingsOpen(false); setOnboarded(false); }} place={place} onOpenLocation={() => setLocOpen(true)} />}
 
       <Toast toast={toast} />
     </div>
