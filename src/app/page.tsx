@@ -174,7 +174,26 @@ const SEED = [
   },
 ];
 
-const ACTIVITY_SEED = [
+/* ----------------------------------------------------------------------------
+   Activity feed types
+   NOTE: previously this used `typeof ACTIVITY_SEED[0]`, which TS narrows to a
+   union of 4 distinct literal shapes (one per seed row). The live Firestore-
+   mapped object (with every field always present) doesn't structurally match
+   any single union member, which is what broke the build. An explicit type
+   with optional fields fixes that.
+   ---------------------------------------------------------------------------- */
+type ActivityItem = {
+  id: string;
+  type: string;
+  who?: string;
+  react?: string;
+  title?: string;
+  detail?: string;
+  ago: string;
+  unread: boolean;
+};
+
+const ACTIVITY_SEED: ActivityItem[] = [
   { id: "a1", type: "reply", who: "rosewater", title: "i got the job", ago: "2m", unread: true },
   { id: "a2", type: "react", who: "nightowl", react: "felt", title: "i got the job", ago: "18m", unread: true },
   { id: "a3", type: "milestone", title: "i got the job", ago: "1h", unread: false, detail: "passed 50 plays" },
@@ -1228,18 +1247,18 @@ function Settings({ handle, anon, notif, onToggleNotif, onClose, onSignOut, plac
 /* ----------------------------------------------------------------------------
    Activity tab
    ---------------------------------------------------------------------------- */
-function ActivityFeed({ items, onOpen }: { items: typeof ACTIVITY_SEED; onOpen: (title: string) => void }) {
-  const icon = (it: typeof ACTIVITY_SEED[0]) => {
+function ActivityFeed({ items, onOpen }: { items: ActivityItem[]; onOpen: (title: string) => void }) {
+  const icon = (it: ActivityItem) => {
     if (it.type === "reply") return { g: "◴", c: C.greenSoft };
-    if (it.type === "react") { const r = REACTIONS.find((x) => x.key === (it as any).react); return { g: r ? r.glyph : "♥", c: r ? r.color : C.rose }; }
+    if (it.type === "react") { const r = REACTIONS.find((x) => x.key === it.react); return { g: r ? r.glyph : "♥", c: r ? r.color : C.rose }; }
     if (it.type === "milestone") return { g: "✦", c: C.amber };
     return { g: "◆", c: C.cyan };
   };
-  const text = (it: typeof ACTIVITY_SEED[0]) => {
-    if (it.type === "reply") return `@${(it as any).who} replied in voice`;
-    if (it.type === "react") { const r = REACTIONS.find((x) => x.key === (it as any).react); return `@${(it as any).who} reacted "${r ? r.label : (it as any).react}"`; }
-    if (it.type === "milestone") return (it as any).detail;
-    return (it as any).detail;
+  const text = (it: ActivityItem) => {
+    if (it.type === "reply") return `@${it.who} replied in voice`;
+    if (it.type === "react") { const r = REACTIONS.find((x) => x.key === it.react); return `@${it.who} reacted "${r ? r.label : it.react}"`; }
+    if (it.type === "milestone") return it.detail;
+    return it.detail;
   };
   return (
     <div>
@@ -1425,7 +1444,7 @@ export default function Nearhum() {
   const [ledger, setLedger] = useState([{ label: "Welcome bonus", delta: 8 }]);
 
   const [userReacts, setUserReacts] = useState<Record<string, string>>({});
-  const [activity, setActivity] = useState<typeof ACTIVITY_SEED>([] as typeof ACTIVITY_SEED);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [notif, setNotif] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1551,7 +1570,7 @@ export default function Nearhum() {
           detail: (data.detail as string) || "",
           ago: timeAgo((data.at as string) || new Date().toISOString()),
           unread: (data.unread as boolean) ?? true,
-        } as typeof ACTIVITY_SEED[0];
+        };
       }));
     }, () => {});
     return () => unsub();
