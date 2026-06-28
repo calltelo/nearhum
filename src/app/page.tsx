@@ -64,11 +64,17 @@ const MOOD_BLURB: Record<string, string> = {
   Spicy: "say the bold thing",
 };
 
-const PACKS = [
-  { n: 20, price: "$1.99", best: false, bonus: 0 },
-  { n: 60, price: "$4.99", best: false, bonus: 5 },
-  { n: 150, price: "$9.99", best: true, bonus: 20 },
-  { n: 400, price: "$19.99", best: false, bonus: 80 },
+const PLAY_PACKS = [
+  { n: 20,  price: "$0.99", best: false },
+  { n: 60,  price: "$1.99", best: false },
+  { n: 200, price: "$4.99", best: true  },
+  { n: 600, price: "$9.99", best: false },
+];
+const CREDIT_PACKS = [
+  { n: 10,  price: "$0.99", best: false },
+  { n: 30,  price: "$1.99", best: false },
+  { n: 100, price: "$4.99", best: true  },
+  { n: 300, price: "$9.99", best: false },
 ];
 const PLAY_COST = 1;
 const DROP_COST = 2;
@@ -656,10 +662,14 @@ function RippleBloom() {
 /* ----------------------------------------------------------------------------
    Mood filter chips
    ---------------------------------------------------------------------------- */
+const MOOD_DOT: Record<string, string> = {
+  "Late Night": "🌙", Soft: "☁", Raw: "⚡", Spicy: "🔥",
+};
+
 function MoodFilter({ active, onPick }: { active: string; onPick: (m: string) => void }) {
   const all = ["All", ...MOOD_LIST];
   return (
-    <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 16 }}>
+    <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, marginBottom: 16, scrollbarWidth: "none" }}>
       {all.map((m) => {
         const on = active === m;
         const col = m === "All" ? C.green : MOOD[m];
@@ -669,17 +679,21 @@ function MoodFilter({ active, onPick }: { active: string; onPick: (m: string) =>
             onClick={() => onPick(m)}
             style={{
               flexShrink: 0,
-              padding: "8px 15px",
+              display: "flex", alignItems: "center", gap: 5,
+              padding: on ? "7px 14px" : "7px 12px",
               borderRadius: 99,
               cursor: "pointer",
               fontFamily: MONO,
               fontSize: 11,
-              letterSpacing: 1,
+              letterSpacing: 0.8,
               border: `1px solid ${on ? col : C.line}`,
-              background: on ? hexA(col, "1A") : "transparent",
+              background: on ? `linear-gradient(135deg, ${hexA(col, "28")}, ${hexA(col, "0E")})` : C.panel2,
               color: on ? col : C.dim,
+              transition: "all .15s",
+              boxShadow: on ? `0 2px 12px ${hexA(col, "33")}` : "none",
             }}
           >
+            {m !== "All" && <span style={{ fontSize: 10 }}>{MOOD_DOT[m]}</span>}
             {m.toUpperCase()}
           </button>
         );
@@ -695,6 +709,7 @@ function VoiceCard({ p, isCurrent, playing, onPick }: {
   p: typeof SEED[0]; isCurrent: boolean; playing: boolean; onPick: (id: string) => void;
 }) {
   const mc = MOOD[p.mood];
+  const pAny = p as unknown as { createdAt?: string };
   return (
     <button
       onClick={() => onPick(p.id)}
@@ -702,49 +717,58 @@ function VoiceCard({ p, isCurrent, playing, onPick }: {
         width: "100%",
         textAlign: "left",
         display: "flex",
-        alignItems: "center",
-        gap: 14,
-        padding: 14,
+        flexDirection: "column",
+        gap: 8,
+        padding: "14px 16px",
         marginBottom: 10,
         borderRadius: 18,
         cursor: "pointer",
         border: `1px solid ${isCurrent ? mc : C.line}`,
-        background: isCurrent ? `linear-gradient(100deg, ${hexA(mc, "20")}, ${C.card})` : C.card,
+        background: isCurrent ? `linear-gradient(135deg, ${hexA(mc, "1A")}, ${C.card} 70%)` : C.card,
         transition: "border-color .2s, background .2s",
       }}
     >
-      <div
-        style={{
-          width: 50,
-          height: 50,
-          borderRadius: 14,
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: hexA(mc, "22"),
-          border: `1px solid ${hexA(mc, "55")}`,
-          color: mc,
-        }}
-      >
-        {isCurrent && playing ? <Eq color={mc} /> : <span style={{ fontSize: 16 }}>▶</span>}
+      {/* mood · handle · dist · time */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ width: 6, height: 6, borderRadius: 99, background: mc, flexShrink: 0 }} />
+        <span style={{ fontFamily: MONO, fontSize: 10, color: mc, letterSpacing: 1, flexShrink: 0 }}>
+          {p.mood.toUpperCase()}
+        </span>
+        <span style={{ fontFamily: MONO, fontSize: 10, color: C.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          @{p.handle} · {p.dist}
+        </span>
+        {pAny.createdAt && (
+          <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: C.dimmer, flexShrink: 0 }}>
+            {timeAgo(pAny.createdAt)}
+          </span>
+        )}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-          <span style={{ width: 6, height: 6, borderRadius: 99, background: mc, flexShrink: 0 }} />
-          <span style={{ fontFamily: MONO, fontSize: 9.5, color: mc, letterSpacing: 1 }}>
-            {p.mood.toUpperCase()}
-          </span>
-          <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            @{p.handle} · {p.dist}
-          </span>
+
+      {/* title */}
+      <div style={{ fontSize: 17, fontWeight: 700, color: C.text, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {p.title}
+      </div>
+
+      {/* play button + waveform + duration */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: 99, flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: isCurrent ? mc : hexA(mc, "22"),
+          color: isCurrent ? C.bg : mc,
+          fontSize: 12,
+        }}>
+          {isCurrent && playing ? <Eq color={isCurrent ? C.bg : mc} size={14} /> : "▶"}
         </div>
-        <div style={{ fontSize: 16, fontWeight: 650, color: C.text, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {p.title}
-        </div>
-        <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 3 }}>
-          {fmtSecs(p.secs)} · ▶ {p.plays} · ◴ {p.replies.length} · ♥ {totalReacts(p.reacts)}{p.createdAt ? ` · ${timeAgo(p.createdAt)}` : ""}
-        </div>
+        <Wave n={22} active={isCurrent && playing} color={mc} seed={p.id.length * 2} />
+        <span style={{ fontFamily: MONO, fontSize: 10, color: C.dim, flexShrink: 0 }}>{fmtSecs(p.secs)}</span>
+      </div>
+
+      {/* stats */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, fontFamily: MONO, fontSize: 11 }}>
+        <span style={{ color: C.dim }}>▶ {p.plays}</span>
+        <span style={{ color: C.dim }}>◴ {p.replies.length}</span>
+        <span style={{ color: totalReacts(p.reacts) > 0 ? C.rose : C.dimmer }}>♥ {totalReacts(p.reacts)}</span>
       </div>
     </button>
   );
@@ -804,31 +828,60 @@ function MiniPlayer({ p, progress, playing, onToggle, onExpand }: {
       onClick={onExpand}
       style={{
         position: "fixed", left: "50%", transform: "translateX(-50%)",
-        bottom: `calc(64px + ${SAFE_B})`, width: "calc(100% - 20px)", maxWidth: 460,
+        bottom: `calc(68px + ${SAFE_B})`, width: "calc(100% - 24px)", maxWidth: 460,
         cursor: "pointer", zIndex: 41,
       }}
     >
       <div
         style={{
-          position: "relative",
-          background: `linear-gradient(100deg, ${hexA(mc, "2A")}, ${C.panel})`,
-          border: `1px solid ${hexA(mc, "55")}`,
-          borderRadius: 18, padding: "10px 12px", display: "flex",
-          alignItems: "center", gap: 12, boxShadow: "0 12px 34px rgba(0,0,0,.55)",
-          overflow: "hidden", backdropFilter: "blur(8px)",
+          position: "relative", overflow: "hidden", borderRadius: 20,
+          background: hexA(C.panel, "F0"),
+          border: `1px solid ${hexA(mc, "44")}`,
+          boxShadow: `0 16px 40px rgba(0,0,0,.6), 0 0 0 1px ${hexA(mc, "18")}`,
+          backdropFilter: "blur(20px)",
         }}
       >
-        <div style={{ position: "absolute", top: 0, left: 0, height: 2, width: `${progress * 100}%`, background: mc, transition: "width .12s" }} />
-        <div style={{ width: 40, height: 40, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: hexA(mc, "22"), color: mc }}>
-          {playing ? <Eq color={mc} /> : <span style={{ fontSize: 14 }}>▶</span>}
+        {/* progress bar */}
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: C.line }}>
+          <div style={{ height: "100%", width: `${progress * 100}%`, background: mc, transition: "width .12s", borderRadius: 99 }} />
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 650, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.title}</div>
-          <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>{playing ? "ON AIR" : "PAUSED"} · @{p.handle}</div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px" }}>
+          {/* mood dot + eq */}
+          <div style={{
+            width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+            background: `linear-gradient(135deg, ${hexA(mc, "30")}, ${hexA(mc, "10")})`,
+            border: `1px solid ${hexA(mc, "50")}`,
+            display: "flex", alignItems: "center", justifyContent: "center", color: mc,
+          }}>
+            {playing ? <Eq color={mc} size={16} /> : <span style={{ fontSize: 15 }}>▶</span>}
+          </div>
+
+          {/* text */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: 2 }}>
+              {p.title}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 5, height: 5, borderRadius: 99, background: mc, flexShrink: 0 }} />
+              <span style={{ fontFamily: MONO, fontSize: 10, color: mc, letterSpacing: 0.8 }}>{p.mood.toUpperCase()}</span>
+              <span style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>· @{p.handle}</span>
+            </div>
+          </div>
+
+          {/* play/pause */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            style={{
+              width: 40, height: 40, borderRadius: 99, border: "none", flexShrink: 0,
+              background: mc, color: C.bg, cursor: "pointer", fontSize: 14,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: `0 4px 14px ${hexA(mc, "55")}`,
+            }}
+          >
+            {playing ? "❚❚" : "▶"}
+          </button>
         </div>
-        <button onClick={(e) => { e.stopPropagation(); onToggle(); }} style={{ width: 44, height: 44, borderRadius: 99, border: "none", background: "transparent", color: C.text, cursor: "pointer", fontSize: 16, flexShrink: 0 }}>
-          {playing ? "❚❚" : "▶"}
-        </button>
       </div>
     </div>
   );
@@ -904,7 +957,7 @@ function FullPlayer({ p, progress, playing, onToggle, onSkip, onPrev, onReply, o
           return (
             <button key={r.key} onClick={() => onReact(r.key)} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 99, cursor: "pointer", border: `1px solid ${on ? r.color : C.line}`, background: on ? hexA(r.color, "22") : "transparent", color: on ? r.color : C.textDim, fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>
               <span style={{ fontSize: 14 }}>{r.glyph}</span>
-              {((p.reacts as Record<string, number>)[r.key] || 0) + (on ? 1 : 0)}
+              {(p.reacts as Record<string, number>)[r.key] || 0}
             </button>
           );
         })}
@@ -1272,24 +1325,65 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
 /* ----------------------------------------------------------------------------
    Top-up sheet
    ---------------------------------------------------------------------------- */
-function TopUp({ credits, onClose, onBuy }: { credits: number; onClose: () => void; onBuy: (n: number) => void }) {
+function TopUp({ credits, plays, onClose, onBuy }: {
+  credits: number; plays: number; onClose: () => void;
+  onBuy: (type: "plays" | "credits", n: number) => void;
+}) {
+  const [tab, setTab] = useState<"plays" | "credits">("plays");
+  const isPlays = tab === "plays";
+  const col = isPlays ? C.cyan : C.green;
+  const packs = isPlays ? PLAY_PACKS : CREDIT_PACKS;
+
   return (
-    <Sheet onClose={onClose} accent={C.green}>
-      <div style={{ textAlign: "center", marginBottom: 6 }}>
-        <div style={{ fontFamily: MONO, fontSize: 30, color: C.green, fontWeight: 700 }}>◆ {credits}</div>
-        <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginTop: 4 }}>CREDITS LEFT</div>
+    <Sheet onClose={onClose} accent={col}>
+      {/* balances */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+        {[
+          { label: "PLAYS", val: plays, color: C.cyan, glyph: "♪" },
+          { label: "CREDITS", val: credits, color: C.green, glyph: "◆" },
+        ].map(({ label, val, color, glyph }) => (
+          <div key={label} style={{ flex: 1, background: hexA(color, "0E"), border: `1px solid ${hexA(color, "30")}`, borderRadius: 14, padding: "12px 10px", textAlign: "center" }}>
+            <div style={{ fontFamily: MONO, fontSize: 24, color, fontWeight: 700 }}>{glyph} {val}</div>
+            <div style={{ fontFamily: MONO, fontSize: 9, color: C.dim, letterSpacing: 1.5, marginTop: 3 }}>{label} LEFT</div>
+          </div>
+        ))}
       </div>
-      <p style={{ textAlign: "center", fontSize: 13, color: C.textDim, lineHeight: 1.5, margin: "10px 0 20px" }}>
-        Listening is free up to {DAILY_FREE_PLAYS} plays a day. After that, each play is {PLAY_COST} credit and dropping your own is {DROP_COST}. Top up to keep the station running.
+
+      {/* tabs */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 14, background: C.panel2, borderRadius: 12, padding: 4 }}>
+        {(["plays", "credits"] as const).map((t) => {
+          const on = tab === t;
+          const tc = t === "plays" ? C.cyan : C.green;
+          return (
+            <button key={t} onClick={() => setTab(t)} style={{ flex: 1, padding: "10px 0", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: MONO, fontSize: 11, letterSpacing: 1, fontWeight: 700, background: on ? hexA(tc, "22") : "transparent", color: on ? tc : C.dim, transition: "all .15s" }}>
+              {t === "plays" ? "♪  PLAYS" : "◆  CREDITS"}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* context line */}
+      <p style={{ fontFamily: MONO, fontSize: 10, color: C.dim, lineHeight: 1.65, margin: "0 0 14px", letterSpacing: 0.2 }}>
+        {isPlays
+          ? "Each play = one voice heard. Stack plays to keep listening without limits."
+          : `Drop costs ${DROP_COST} credits · Hum costs ${PLAY_COST} credit. Credits never expire.`}
       </p>
-      {PACKS.map((pk) => (
-        <button key={pk.n} onClick={() => onBuy(pk.n + pk.bonus)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: 16, marginBottom: 10, borderRadius: 14, cursor: "pointer", border: `1px solid ${pk.best ? C.green : C.line}`, background: pk.best ? hexA(C.green, "12") : C.card }}>
-          <span style={{ fontFamily: MONO, fontSize: 20, color: C.green, fontWeight: 700 }}>◆ {pk.n}</span>
-          {pk.bonus > 0 && <span style={{ fontFamily: MONO, fontSize: 10, color: C.greenSoft }}>+{pk.bonus} bonus</span>}
-          {pk.best && <span style={{ fontFamily: MONO, fontSize: 9, color: C.green, border: `1px solid ${C.green}`, borderRadius: 99, padding: "2px 7px", letterSpacing: 1 }}>BEST VALUE</span>}
+
+      {/* packs */}
+      {packs.map((pk) => (
+        <button
+          key={pk.n}
+          onClick={() => onBuy(tab, pk.n)}
+          style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", marginBottom: 8, borderRadius: 14, cursor: "pointer", border: `1px solid ${pk.best ? col : C.line}`, background: pk.best ? hexA(col, "12") : C.card, transition: "border-color .15s" }}
+        >
+          <span style={{ fontFamily: MONO, fontSize: 20, color: col, fontWeight: 700 }}>{isPlays ? "♪" : "◆"} {pk.n}</span>
+          {pk.best && (
+            <span style={{ fontFamily: MONO, fontSize: 9, color: col, border: `1px solid ${col}`, borderRadius: 99, padding: "2px 8px", letterSpacing: 1 }}>BEST VALUE</span>
+          )}
           <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 15, color: C.text, fontWeight: 700 }}>{pk.price}</span>
         </button>
       ))}
+
       <p style={{ textAlign: "center", fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 10 }}>Secure checkout · Demo only, no charge</p>
     </Sheet>
   );
@@ -1453,7 +1547,7 @@ function LocationSheet({ place, onPick, onClose }: { place: string; onPick: (p: 
    Tab bar
    ---------------------------------------------------------------------------- */
 function TabBar({ tab, setTab, unread }: { tab: string; setTab: (t: string) => void; unread: number }) {
-  const tabs: [string, string, string][] = [["feed", "RADIO", "◉"], ["activity", "ACTIVITY", "◴"], ["you", "YOU", "◍"]];
+  const tabs: [string, string, string][] = [["feed", "HUMS", "◉"], ["activity", "ACTIVITY", "◴"], ["you", "YOU", "◍"]];
   return (
     <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: hexA(C.panel, "F2"), backdropFilter: "blur(12px)", borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "center", zIndex: 42, paddingBottom: SAFE_B }}>
       <div style={{ width: "100%", maxWidth: 480, display: "flex" }}>
@@ -1747,11 +1841,19 @@ export default function Nearhum() {
     return () => { audio.removeEventListener("timeupdate", onTime); audio.removeEventListener("ended", onEnded); };
   }, [pings.length]);
 
-  const buy = (n: number) => {
-    setCredits((c) => c + n);
-    setLedger((l) => [{ label: `Bought ${n} credits`, delta: n }, ...l].slice(0, 16));
+  const buy = (type: "plays" | "credits", n: number) => {
+    const uid = auth.currentUser?.uid;
+    if (type === "plays") {
+      setFreeLeft((f) => f + n);
+      if (uid) updateDoc(doc(firestore, "users", uid), { plays: increment(n) }).catch(() => {});
+      flash(`+${n} plays added`);
+    } else {
+      setCredits((c) => c + n);
+      setLedger((l) => [{ label: `Bought ${n} credits`, delta: n }, ...l].slice(0, 16));
+      if (uid) updateDoc(doc(firestore, "users", uid), { credits: increment(n) }).catch(() => {});
+      flash(`+${n} credits added`);
+    }
     setTopupOpen(false);
-    flash(`+${n} credits added`);
   };
 
   const jump = (id: string) => {
@@ -1782,28 +1884,25 @@ export default function Nearhum() {
     if (!cur) return;
     const id = cur.id;
     const uid = auth.currentUser?.uid;
-    setUserReacts((prev) => {
-      const had = prev[id];
-      const next = { ...prev };
-      if (had === key) {
-        delete next[id];
-        updateDoc(doc(firestore, "drops", id), { [`reacts.${key}`]: increment(-1) }).catch(() => {});
-      } else {
-        next[id] = key;
-        const updates: Record<string, unknown> = { [`reacts.${key}`]: increment(1) };
-        if (had) updates[`reacts.${had}`] = increment(-1);
-        updateDoc(doc(firestore, "drops", id), updates).catch(() => {});
-        const ownerUid = (cur as unknown as { ownerUid: string }).ownerUid;
-        if (uid && ownerUid && ownerUid !== uid) {
-          addDoc(collection(firestore, "users", ownerUid, "activity"), {
-            type: "react", who: myHandle, react: key,
-            title: cur.title, dropId: id,
-            at: new Date().toISOString(), unread: true,
-          }).catch(() => {});
-        }
+    const had = userReacts[id];
+
+    if (had === key) {
+      setUserReacts((prev) => { const next = { ...prev }; delete next[id]; return next; });
+      updateDoc(doc(firestore, "drops", id), { [`reacts.${key}`]: increment(-1) }).catch(() => {});
+    } else {
+      setUserReacts((prev) => ({ ...prev, [id]: key }));
+      const updates: Record<string, unknown> = { [`reacts.${key}`]: increment(1) };
+      if (had) updates[`reacts.${had}`] = increment(-1);
+      updateDoc(doc(firestore, "drops", id), updates).catch(() => {});
+      const ownerUid = (cur as unknown as { ownerUid: string }).ownerUid;
+      if (uid && ownerUid && ownerUid !== uid) {
+        addDoc(collection(firestore, "users", ownerUid, "activity"), {
+          type: "react", who: myHandle, react: key,
+          title: cur.title, dropId: id,
+          at: new Date().toISOString(), unread: true,
+        }).catch(() => {});
       }
-      return next;
-    });
+    }
   };
 
   const dropPing = ({ title, mood, secs, audioUrl, dropId }: { title: string; mood: string; secs: number; audioUrl: string; dropId: string }) => {
@@ -1963,7 +2062,7 @@ export default function Nearhum() {
       {cur && expanded && <FullPlayer p={cur} progress={progress} playing={playing} idx={idx} total={pings.length} userReact={userReacts[cur.id]} onReact={react} onToggle={() => setPlaying((v) => !v)} onSkip={skip} onPrev={prev} onReply={() => setSheetOpen(true)} onCollapse={() => setExpanded(false)} />}
       {cur && sheetOpen && <ReplySheet ping={cur} onClose={() => setSheetOpen(false)} onAddReply={addReply} uid={auth.currentUser?.uid ?? ""} myHandle={myHandle} />}
       {dropOpen && <DropSheet onClose={() => setDropOpen(false)} onDrop={dropPing} credits={credits} handle={myHandle} uid={auth.currentUser?.uid ?? ""} place={place} lat={myCoords?.lat ?? null} lng={myCoords?.lng ?? null} />}
-      {topupOpen && <TopUp credits={credits} onClose={() => setTopupOpen(false)} onBuy={buy} />}
+      {topupOpen && <TopUp credits={credits} plays={freeLeft} onClose={() => setTopupOpen(false)} onBuy={buy} />}
       {locOpen && <LocationSheet place={place} onClose={() => setLocOpen(false)} onPick={(p) => { setPlace(p); setLocOpen(false); setIdx(0); setProgress(0); flash(p.startsWith("Near me") ? "Back to your block" : `Tuned in to ${p}`); }} />}
       {settingsOpen && <Settings handle={myHandle} anon={myHandle === "—"} notif={notif} onToggleNotif={() => setNotif((v) => !v)} onClose={() => setSettingsOpen(false)} onSignOut={async () => { await signOut(auth); setMyHandle("—"); setSettingsOpen(false); setOnboarded(false); }} place={place} onOpenLocation={() => setLocOpen(true)} />}
 
