@@ -204,13 +204,6 @@ type ActivityItem = {
   unread: boolean;
 };
 
-const ACTIVITY_SEED: ActivityItem[] = [
-  { id: "a1", type: "reply", who: "rosewater", title: "i got the job", ago: "2m", unread: true },
-  { id: "a2", type: "react", who: "nightowl", react: "felt", title: "i got the job", ago: "18m", unread: true },
-  { id: "a3", type: "milestone", title: "i got the job", ago: "1h", unread: false, detail: "passed 50 plays" },
-  { id: "a4", type: "reply", who: "—", title: "i got the job", ago: "3h", unread: false },
-  { id: "a5", type: "system", ago: "1d", unread: false, detail: "Welcome to Nearhum. Your first 7 plays and 7 credits are on us." },
-];
 
 /* ----------------------------------------------------------------------------
    Small helpers
@@ -1908,7 +1901,8 @@ export default function Nearhum() {
   useEffect(() => {
     if (!onboarded || !playing) return;
     const id = pings[idx]?.id;
-    if (!id || charged.includes(id) || myDropIds.includes(id)) return;
+    const pingOwner = (pings[idx] as unknown as { ownerUid: string }).ownerUid;
+    if (!id || charged.includes(id) || myDropIds.includes(id) || pingOwner === auth.currentUser?.uid) return;
     if (freeLeft > 0) {
       setFreeLeft((f) => f - 1);
       setCharged((s) => [...s, id]);
@@ -2082,7 +2076,11 @@ export default function Nearhum() {
   };
 
   const markActivityRead = () => setActivity((prev) => prev.map((a) => ({ ...a, unread: false })));
-  const myPosts = pings.filter((p) => myDropIds.includes(p.id));
+  const uid = auth.currentUser?.uid;
+  const myPosts = pings.filter((p) => {
+    const own = (p as unknown as { ownerUid: string }).ownerUid;
+    return own === uid || myDropIds.includes(p.id);
+  });
   const shown = moodFilter === "All" ? pings : pings.filter((p) => p.mood === moodFilter);
 
   if (!authChecked) {
@@ -2120,7 +2118,10 @@ export default function Nearhum() {
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <CreditChip credits={credits} freeLeft={freeLeft} low={freeLeft === 0 && credits < 2} onClick={() => setTopupOpen(true)} />
-                <button onClick={() => setDropOpen(true)} style={{ width: 44, height: 44, borderRadius: 99, border: "none", background: C.green, color: C.bg, fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 4px 18px ${hexA(C.green, "65")}` }}>＋</button>
+                <button
+                  onClick={() => { if (place.startsWith("Near me")) setDropOpen(true); else flash("You can only drop where you actually are"); }}
+                  style={{ width: 44, height: 44, borderRadius: 99, border: "none", background: C.green, color: C.bg, fontSize: 22, cursor: place.startsWith("Near me") ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 4px 18px ${hexA(C.green, "65")}`, opacity: place.startsWith("Near me") ? 1 : 0.38 }}
+                >＋</button>
               </div>
             </div>
 
@@ -2213,11 +2214,11 @@ export default function Nearhum() {
               </div>
               <div style={{ marginTop: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 11, color: C.dim, marginBottom: 6 }}>
-                  <span>FREE PLAYS TODAY</span>
-                  <span style={{ color: C.greenSoft }}>{freeLeft} / {DAILY_FREE_PLAYS}</span>
+                  <span>PLAYS BALANCE</span>
+                  <span style={{ color: C.greenSoft }}>♪ {freeLeft}</span>
                 </div>
                 <div style={{ height: 8, borderRadius: 99, background: C.line, overflow: "hidden" }}>
-                  <div style={{ width: `${(freeLeft / DAILY_FREE_PLAYS) * 100}%`, height: "100%", background: `linear-gradient(90deg, ${C.greenDeep}, ${C.greenSoft})`, transition: "width .3s" }} />
+                  <div style={{ width: `${Math.min((freeLeft / DAILY_FREE_PLAYS) * 100, 100)}%`, height: "100%", background: `linear-gradient(90deg, ${C.greenDeep}, ${C.greenSoft})`, transition: "width .3s" }} />
                 </div>
                 <div style={{ display: "flex", gap: 16, marginTop: 14, fontFamily: MONO, fontSize: 11, color: C.dim }}>
                   <span>▶ extra play · {PLAY_COST}</span>
