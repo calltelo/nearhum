@@ -3940,6 +3940,299 @@ function QuickActionsBar({ onSave, onShare, onThread, onReport, onTip, saved }: 
 }
 
 /* ----------------------------------------------------------------------------
+   VoiceDropCountdown — live ticking countdown to drop expiry
+   ---------------------------------------------------------------------------- */
+function VoiceDropCountdown({ ttl }: { ttl: number }) {
+  const [display, setDisplay] = useState(ttl);
+
+  useEffect(() => {
+    const i = setInterval(() => setDisplay((d) => Math.max(0, d - 1 / 3600)), 1000);
+    return () => clearInterval(i);
+  }, []);
+
+  const h = Math.floor(display);
+  const m = Math.floor((display - h) * 60);
+  const s = Math.floor(((display - h) * 60 - m) * 60);
+  const urgent = display < 1;
+  const color = urgent ? C.red : display < 4 ? C.amber : C.dim;
+
+  if (display <= 0) return <span style={{ fontFamily: MONO, fontSize: 10, color: C.red, letterSpacing: 1 }}>EXPIRED</span>;
+
+  return (
+    <span style={{ fontFamily: MONO, fontSize: 10, color, letterSpacing: 1 }}>
+      {urgent ? `${m}m ${s.toString().padStart(2, "0")}s` : `${h}h ${m.toString().padStart(2, "0")}m`}
+    </span>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   VoiceCardExpanded — inline expandable view (used in feed for accessibility)
+   ---------------------------------------------------------------------------- */
+function VoiceCardExpanded({ p, userReact, onReact, onSave, saved, onShare, onReport, onTip, onProfile }: {
+  p: typeof SEED[0]; userReact: string | undefined;
+  onReact: (k: string) => void; onSave: () => void; saved: boolean;
+  onShare: () => void; onReport: () => void; onTip: () => void; onProfile: () => void;
+}) {
+  const mc = MOOD[p.mood];
+
+  return (
+    <div style={{ borderTop: `1px solid ${C.line}`, marginTop: 10, paddingTop: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+        <VoiceReactionBar reacts={p.reacts} userReact={userReact} mc={mc} onReact={onReact} />
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {[
+          { label: saved ? "Unsave" : "Save", icon: "◎", action: onSave, active: saved },
+          { label: "Share", icon: "↗", action: onShare, active: false },
+          { label: "Tip", icon: "◆", action: onTip, active: false },
+          { label: "@" + p.handle, icon: "◍", action: onProfile, active: false },
+          { label: "Report", icon: "⚑", action: onReport, active: false },
+        ].map(({ label, icon, action, active }) => (
+          <button key={label} onClick={action} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 8, border: `1px solid ${active ? mc : C.line}`, background: active ? hexA(mc, "15") : "transparent", color: active ? mc : C.dim, fontFamily: MONO, fontSize: 10, cursor: "pointer" }}>
+            <span>{icon}</span><span>{label}</span>
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
+        <span style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>Expires: <VoiceDropCountdown ttl={p.ttl} /></span>
+        <span style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>{p.replies.length} repl{p.replies.length === 1 ? "y" : "ies"}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   OnboardingStep helper — reused across onboarding screens
+   ---------------------------------------------------------------------------- */
+function OnboardingStepDot({ total, current }: { total: number; current: number }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+      {Array(total).fill(0).map((_, i) => (
+        <div key={i} style={{ width: i === current ? 18 : 6, height: 6, borderRadius: 3, background: i === current ? C.green : C.line, transition: "width 0.3s, background 0.3s" }} />
+      ))}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   VoiceShareCard — a shareable image-like card for a drop (rendered as DOM)
+   ---------------------------------------------------------------------------- */
+function VoiceShareCard({ p }: { p: typeof SEED[0] }) {
+  const mc = MOOD[p.mood];
+  const total = p.reacts.felt + p.reacts.same + p.reacts.loud;
+
+  return (
+    <div style={{ background: `linear-gradient(160deg, ${hexA(mc, "22")}, #0A0A0F)`, border: `1px solid ${hexA(mc, "40")}`, borderRadius: 20, padding: "24px 20px", maxWidth: 340, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <Mark size={24} knock={hexA(mc, "22")} />
+        <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: 2, color: C.dim }}>nearhum</span>
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: C.text, lineHeight: 1.3, marginBottom: 12 }}>{p.title}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+        <span style={{ width: 7, height: 7, borderRadius: 99, background: mc, flexShrink: 0 }} />
+        <span style={{ fontFamily: MONO, fontSize: 11, color: mc }}>{p.mood}</span>
+        <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>@{p.handle}</span>
+        <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>·</span>
+        <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>{p.dist}</span>
+      </div>
+      <Wave n={28} active={false} color={mc} seed={p.id.length * 9} />
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
+        <div style={{ display: "flex", gap: 12 }}>
+          <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>♥ {p.reacts.felt}</span>
+          <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>◎ {p.reacts.same}</span>
+          <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>✦ {p.reacts.loud}</span>
+        </div>
+        <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>{total} reactions</span>
+      </div>
+      <div style={{ fontFamily: MONO, fontSize: 10, color: hexA(mc, "60"), textAlign: "center", marginTop: 16, letterSpacing: 2 }}>nearhum.app · voice your block</div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   CreditsExplainer — small inline tip about how credits work
+   ---------------------------------------------------------------------------- */
+function CreditsExplainer({ onLearnMore }: { onLearnMore: () => void }) {
+  return (
+    <div style={{ background: hexA(C.green, "0A"), border: `1px solid ${hexA(C.green, "25")}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ color: C.green, fontSize: 16, flexShrink: 0 }}>◆</span>
+      <div style={{ flex: 1, fontFamily: MONO, fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
+        Drops cost 1 credit each. Earn credits by getting reactions and replies.
+      </div>
+      <button onClick={onLearnMore} style={{ flexShrink: 0, fontFamily: MONO, fontSize: 10, color: C.green, background: "none", border: "none", cursor: "pointer", letterSpacing: 1 }}>HOW?</button>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   VoiceSpotlightCard — featured voice with large waveform, used in discover
+   ---------------------------------------------------------------------------- */
+function VoiceSpotlightCard({ p, onPlay, isActive }: { p: typeof SEED[0]; onPlay: () => void; isActive: boolean }) {
+  const mc = MOOD[p.mood];
+  return (
+    <div style={{ background: `linear-gradient(140deg, ${hexA(mc, "15")}, ${C.panel2})`, border: `1px solid ${hexA(mc, "45")}`, borderRadius: 20, padding: "18px 16px", marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: 2, color: mc, marginBottom: 4 }}>SPOTLIGHT</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.text, maxWidth: 220, lineHeight: 1.3 }}>{p.title}</div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>{p.plays} plays</div>
+          <div style={{ fontFamily: MONO, fontSize: 10, color: mc, marginTop: 2 }}>{p.dist}</div>
+        </div>
+      </div>
+      <button onClick={onPlay} style={{ width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 12 }}>
+        <Wave n={36} active={isActive} color={mc} seed={p.id.length * 17} />
+      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button onClick={onPlay} style={{ width: 44, height: 44, borderRadius: 99, border: "none", background: mc, color: C.bg, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {isActive ? "❚❚" : "▶"}
+        </button>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>@{p.handle}</div>
+          <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, marginTop: 2 }}>{p.mood} · {fmtSecs(p.secs)}</div>
+        </div>
+        <VoiceDropCountdown ttl={p.ttl} />
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   BlockConfirmModal — confirm before blocking a user
+   ---------------------------------------------------------------------------- */
+function BlockConfirmModal({ handle, onConfirm, onCancel }: { handle: string; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ background: C.bg, borderRadius: 20, padding: "24px 20px", maxWidth: 320, width: "100%", border: `1px solid ${C.line}` }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 10 }}>Block @{handle}?</div>
+        <div style={{ color: C.dim, fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
+          Their drops won&apos;t appear in your feed and they can&apos;t see your drops. You can unblock them any time in Settings.
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: "12px 0", borderRadius: 12, background: C.panel2, border: `1px solid ${C.line}`, color: C.dim, fontFamily: MONO, fontSize: 12, cursor: "pointer" }}>CANCEL</button>
+          <button onClick={onConfirm} style={{ flex: 1, padding: "12px 0", borderRadius: 12, background: C.red, border: "none", color: C.text, fontFamily: MONO, fontSize: 12, cursor: "pointer", fontWeight: 700 }}>BLOCK</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   MoodHistory — sparkline of mood distribution over time
+   ---------------------------------------------------------------------------- */
+function MoodHistory({ pings, myDropIds }: { pings: typeof SEED; myDropIds: string[] }) {
+  const mine = pings.filter((p) => myDropIds.includes(p.id));
+  if (mine.length < 2) return null;
+
+  const recent = mine.slice(0, 10).reverse();
+  const moodKeys = Object.keys(MOOD);
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: 2, color: C.dim, marginBottom: 10 }}>MOOD HISTORY</div>
+      <div style={{ display: "flex", gap: 4, alignItems: "flex-end" }}>
+        {recent.map((p, i) => {
+          const mc = MOOD[p.mood];
+          const rank = moodKeys.indexOf(p.mood);
+          const h = 20 + ((rank + 1) / moodKeys.length) * 40;
+          return (
+            <div key={p.id} title={p.mood} style={{ flex: 1, height: h, borderRadius: 4, background: mc, opacity: 0.6 + (i / recent.length) * 0.4 }} />
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+        <span style={{ fontFamily: MONO, fontSize: 9, color: C.dim }}>oldest</span>
+        <span style={{ fontFamily: MONO, fontSize: 9, color: C.dim }}>latest</span>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   MOOD_DESCRIPTIONS — what each mood means in context
+   ---------------------------------------------------------------------------- */
+const MOOD_DESCRIPTIONS: Record<string, string> = {
+  raw: "Unfiltered. No filter, no polish. Just whatever's on your mind.",
+  soft: "Gentle energy. Something tender, nostalgic, or bittersweet.",
+  hype: "High energy. Excited, fired up, or ready to go.",
+  low: "Quiet or heavy. Processing something. Not performing.",
+  "Late Night": "It's 2am thoughts. Something only makes sense in the dark.",
+  Raw: "Unedited, unpolished. The real thing.",
+};
+
+/* ----------------------------------------------------------------------------
+   MoodDescriptionTooltip — shows what a mood means when hovering/tapping
+   ---------------------------------------------------------------------------- */
+function MoodDescriptionTooltip({ mood, onClose }: { mood: string; onClose: () => void }) {
+  const desc = MOOD_DESCRIPTIONS[mood] ?? `A ${mood} voice drop.`;
+  const mc = MOOD[mood as keyof typeof MOOD] ?? C.green;
+
+  useEffect(() => {
+    const t = setTimeout(onClose, 3000);
+    return () => clearTimeout(t);
+  }, [onClose]);
+
+  return (
+    <div style={{ position: "fixed", bottom: 120, left: "50%", transform: "translateX(-50%)", zIndex: 200, background: C.panel2, border: `1px solid ${mc}`, borderRadius: 14, padding: "12px 16px", maxWidth: 280, boxShadow: `0 4px 20px ${hexA(mc, "30")}`, animation: "toastIn 0.25s ease" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <span style={{ width: 8, height: 8, borderRadius: 99, background: mc, flexShrink: 0 }} />
+        <span style={{ fontFamily: MONO, fontSize: 11, color: mc, letterSpacing: 1 }}>{mood.toUpperCase()}</span>
+      </div>
+      <div style={{ color: C.dim, fontSize: 13, lineHeight: 1.5 }}>{desc}</div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   FeedDivider — section divider with label, used to separate feed sections
+   ---------------------------------------------------------------------------- */
+function FeedDivider({ label }: { label: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0 12px" }}>
+      <div style={{ flex: 1, height: 1, background: C.line }} />
+      <span style={{ fontFamily: MONO, fontSize: 9, color: C.dim, letterSpacing: 2, whiteSpace: "nowrap" }}>{label}</span>
+      <div style={{ flex: 1, height: 1, background: C.line }} />
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   VoiceSearchBar — inline compact search (alternative to full sheet)
+   ---------------------------------------------------------------------------- */
+function VoiceSearchBar({ onSubmit }: { onSubmit: (q: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { if (open) setTimeout(() => ref.current?.focus(), 80); }, [open]);
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 12, cursor: "pointer", marginBottom: 12 }}>
+        <span style={{ color: C.dim, fontSize: 14 }}>⌕</span>
+        <span style={{ fontFamily: MONO, fontSize: 12, color: C.dim }}>search drops near you…</span>
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ position: "relative", marginBottom: 12 }}>
+      <input
+        ref={ref}
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { onSubmit(q); setOpen(false); setQ(""); } if (e.key === "Escape") { setOpen(false); setQ(""); } }}
+        placeholder="search drops…"
+        style={{ width: "100%", background: C.panel2, border: `1px solid ${C.green}`, borderRadius: 12, padding: "10px 40px 10px 40px", color: C.text, fontFamily: MONO, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+      />
+      <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.dim, fontSize: 14 }}>⌕</span>
+      <button onClick={() => { setOpen(false); setQ(""); }} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: C.dim, cursor: "pointer", fontSize: 13 }}>✕</button>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
    Root
    ---------------------------------------------------------------------------- */
 export default function Nearhum() {
@@ -4019,6 +4312,9 @@ export default function Nearhum() {
   const [newDropAlert, setNewDropAlert] = useState<typeof SEED[0] | null>(null);
   const [spikeAlertDismissed, setSpikeAlertDismissed] = useState(false);
   const [featuredIdx, setFeaturedIdx] = useState(0);
+  const [blockConfirmHandle, setBlockConfirmHandle] = useState<string | null>(null);
+  const [tzDismissed, setTzDismissed] = useState(false);
+  const [showSpotlight, setShowSpotlight] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -4216,6 +4512,44 @@ export default function Nearhum() {
     if (audioRef.current) audioRef.current.playbackRate = playbackSpeed;
   }, [playbackSpeed]);
 
+  // Notify user of newest drop (simulated push-like banner for very new drops)
+  useEffect(() => {
+    if (!onboarded || pings.length === 0) return;
+    const newest = pings[0];
+    if (!newest) return;
+    const ageSecs = (Date.now() - new Date(newest.createdAt ?? newest.id).getTime()) / 1000;
+    if (ageSecs < 10 && newest.handle !== myHandle) {
+      setNewDropAlert(newest);
+    }
+  }, [pings.length]);
+
+  // Rotate featured drop every 15 seconds
+  useEffect(() => {
+    if (pings.length === 0) return;
+    const i = setInterval(() => setFeaturedIdx((x) => (x + 1) % pings.length), 15000);
+    return () => clearInterval(i);
+  }, [pings.length]);
+
+  // Achievement: first reaction received
+  useEffect(() => {
+    const totalInbound = activity.filter((a) => a.type === "react").length;
+    if (totalInbound === 1) unlockAchievement({ icon: "❤️", title: "First Felt", detail: "Someone reacted to your voice" });
+    if (totalInbound >= 10) unlockAchievement({ icon: "💫", title: "10 Reactions", detail: "Your voice is resonating" });
+  }, [activity.length]);
+
+  // Achievement: first voice reply received
+  useEffect(() => {
+    const totalReplies = activity.filter((a) => a.type === "reply").length;
+    if (totalReplies === 1) unlockAchievement({ icon: "🎙️", title: "First Reply", detail: "Someone answered your drop with their voice" });
+  }, [activity.length]);
+
+  // Track plays milestone
+  useEffect(() => {
+    const totalPlays = myPosts.reduce((s, p) => s + p.plays, 0);
+    if (totalPlays >= 50) unlockAchievement({ icon: "🎯", title: "50 Plays", detail: "Your voice has been heard 50 times" });
+    if (totalPlays >= 100) unlockAchievement({ icon: "💫", title: "100 Plays", detail: "Your voice has reached 100 plays" });
+  }, [myPosts.reduce((s, p) => s + p.plays, 0)]);
+
   // Streak tracking — count consecutive days with at least one drop
   useEffect(() => {
     if (myDropIds.length === 0) return;
@@ -4377,9 +4711,12 @@ export default function Nearhum() {
             <VoiceMoodRing pings={pings} />
             <DiscoverSection pings={pings} onSelect={(i) => { setIdx(i); setExpanded(true); setPlaying(true); }} />
             <VoicePodiumWidget pings={pings} onSelect={(i) => { setIdx(i); setExpanded(true); setPlaying(true); }} />
+            <FeedDivider label="TRENDING" />
             <LoudestHero p={[...pings].sort((a, b) => b.plays - a.plays)[0] ?? null} onOpen={(id) => { jump(id); setExpanded(true); }} />
             <MoodFilter active={moodFilter} onPick={setMoodFilter} />
             <SortBar sort={sortBy} onSort={setSortBy} />
+            <VoiceSearchBar onSubmit={(q) => { setSearchOpen(true); }} />
+            <FeedDivider label="LIVE FEED" />
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
               <button onClick={() => setLocOpen(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "none", padding: 0, cursor: "pointer" }}>
@@ -4401,7 +4738,14 @@ export default function Nearhum() {
             ))}
             {feedLoading && <div style={{ textAlign: "center", color: C.dim, fontFamily: MONO, fontSize: 11, letterSpacing: 1.5, padding: "40px 0" }}>TUNING IN...</div>}
             {!feedLoading && shown.length === 0 && <EmptyFeedCTA onDrop={() => setDropOpen(true)} handle={myHandle} />}
-            {!feedLoading && shown.length > 0 && <EndOfFeedCard total={shown.length} onDrop={() => setDropOpen(true)} />}
+            {!feedLoading && shown.length > 0 && (
+              <>
+                {credits < 3 && <CreditsExplainer onLearnMore={() => setEarnOpen(true)} />}
+                {showSpotlight && shown[0] && <VoiceSpotlightCard p={shown[0]} onPlay={() => { setIdx(0); setExpanded(true); setPlaying(true); }} isActive={!!(cur && shown[0].id === cur.id && playing)} />}
+                {!tzDismissed && <TimezoneShiftNotice cityLabel={cityLabel} onDismiss={() => setTzDismissed(true)} />}
+                <EndOfFeedCard total={shown.length} onDrop={() => setDropOpen(true)} />
+              </>
+            )}
           </div>
         )}
 
@@ -4417,7 +4761,17 @@ export default function Nearhum() {
             <ActivityDigestCard activity={activity} pings={pings} myDropIds={myDropIds} />
             <TopDropsSection myDropIds={myDropIds} pings={pings} onPlay={(id) => { jump(id); setTab("feed"); setExpanded(true); }} />
             <HorizontalVoiceScroll label="RECENTLY ACTIVE" pings={shown.slice(0, 8)} onSelect={(i) => { setIdx(i); setTab("feed"); setExpanded(true); setPlaying(true); }} />
+            <FeedDivider label="NOTIFICATIONS" />
             <ActivityFeed items={activity} onOpen={openByTitle} />
+            {activity.length > 0 && (
+              <div style={{ marginTop: 16, padding: "12px 16px", background: C.panel2, borderRadius: 14, border: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 1.5, marginBottom: 2 }}>ALL CAUGHT UP</div>
+                  <div style={{ color: C.dim, fontSize: 13 }}>{activity.length} notification{activity.length !== 1 ? "s" : ""} total</div>
+                </div>
+                <button onClick={markActivityRead} style={{ fontFamily: MONO, fontSize: 10, color: C.green, background: "none", border: `1px solid ${C.green}`, borderRadius: 99, padding: "6px 12px", cursor: "pointer", letterSpacing: 1 }}>CLEAR</button>
+              </div>
+            )}
           </div>
         )}
 
@@ -4433,6 +4787,31 @@ export default function Nearhum() {
             <VoicePlayerControls playing={playing} onToggle={() => setPlaying((v) => !v)} onSkip={skip} onPrev={prev} speed={playbackSpeed} onSpeedChange={setPlaybackSpeed} />
             <div style={{ height: 20 }} />
             <HorizontalVoiceScroll label="YOUR DROPS" pings={myPosts} onSelect={(i) => { jump(myPosts[i]?.id ?? ""); setTab("feed"); setExpanded(true); }} />
+            <MoodHistory pings={pings} myDropIds={myDropIds} />
+            {myPosts.length > 0 && (
+              <div style={{ background: C.panel2, borderRadius: 16, padding: "16px", marginBottom: 16, border: `1px solid ${C.line}` }}>
+                <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: 2, color: C.dim, marginBottom: 12 }}>YOUR STATS</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  {[
+                    { label: "Total drops", value: myPosts.length },
+                    { label: "Total plays", value: myPosts.reduce((s, p) => s + p.plays, 0) },
+                    { label: "Voice replies", value: myPosts.reduce((s, p) => s + p.replies.length, 0) },
+                    { label: "Total reactions", value: myPosts.reduce((s, p) => s + p.reacts.felt + p.reacts.same + p.reacts.loud, 0) },
+                    { label: "Saved by others", value: Math.floor(myPosts.reduce((s, p) => s + p.plays, 0) / 10) },
+                    { label: "Avg. listeners", value: myPosts.length ? Math.round(myPosts.reduce((s, p) => s + p.plays, 0) / myPosts.length) : 0 },
+                  ].map(({ label, value }) => (
+                    <div key={label} style={{ padding: "10px 12px", background: C.bg, borderRadius: 10, border: `1px solid ${C.line}` }}>
+                      <div style={{ fontFamily: MONO, fontSize: 9, color: C.dim, letterSpacing: 1, marginBottom: 4 }}>{label.toUpperCase()}</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: C.green }}>{value.toLocaleString()}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <button onClick={() => setInviteOpen(true)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, background: hexA(C.green, "15"), border: `1px solid ${hexA(C.green, "40")}`, color: C.green, fontFamily: MONO, fontSize: 11, cursor: "pointer", letterSpacing: 1 }}>INVITE</button>
+                  <button onClick={() => setLeaderboardOpen(true)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, background: hexA(C.amber, "15"), border: `1px solid ${hexA(C.amber, "40")}`, color: C.amber, fontFamily: MONO, fontSize: 11, cursor: "pointer", letterSpacing: 1 }}>LEADERBOARD</button>
+                </div>
+              </div>
+            )}
             <YouTab
               handle={myHandle}
               credits={credits}
@@ -4474,6 +4853,7 @@ export default function Nearhum() {
       {draftsOpen && <DraftsSheet drafts={drafts} onClose={() => setDraftsOpen(false)} onPublish={(d) => { flash(`Publishing "${d.title}"`); setDrafts((prev) => prev.filter((x) => x.id !== d.id)); setDraftsOpen(false); }} onDelete={(id) => setDrafts((prev) => prev.filter((x) => x.id !== id))} />}
       {followingOpen && <FollowingSheet following={following} pings={pings} onClose={() => setFollowingOpen(false)} onSelect={(i) => { setIdx(i); setExpanded(true); setPlaying(true); }} />}
       {rulesOpen && <CommunityRulesSheet onClose={() => setRulesOpen(false)} />}
+      {blockConfirmHandle && <BlockConfirmModal handle={blockConfirmHandle} onConfirm={() => { blockUser(blockConfirmHandle); setBlockConfirmHandle(null); }} onCancel={() => setBlockConfirmHandle(null)} />}
       {tipTarget && <TipJarSheet ping={tipTarget} myCredits={credits} onClose={() => setTipTarget(null)} onTip={(n) => tipCreator(n)} />}
       {threadTarget && <DropThreadView ping={threadTarget} onClose={() => setThreadTarget(null)} onPlayReply={() => {}} handle={myHandle} uid={auth.currentUser?.uid ?? ""} />}
       {privacyOpen && <PrivacySheet onClose={() => setPrivacyOpen(false)} />}
