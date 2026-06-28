@@ -65,16 +65,20 @@ const MOOD_BLURB: Record<string, string> = {
 };
 
 const PLAY_PACKS = [
-  { n: 20,  price: "$0.99", best: false },
-  { n: 60,  price: "$1.99", best: false },
-  { n: 200, price: "$4.99", best: true  },
-  { n: 600, price: "$9.99", best: false },
+  { n: 25,   price: "$1",   best: false },
+  { n: 150,  price: "$5",   best: false },
+  { n: 350,  price: "$10",  best: false },
+  { n: 800,  price: "$20",  best: true  },
+  { n: 2500, price: "$50",  best: false },
+  { n: 6000, price: "$100", best: false },
 ];
 const CREDIT_PACKS = [
-  { n: 10,  price: "$0.99", best: false },
-  { n: 30,  price: "$1.99", best: false },
-  { n: 100, price: "$4.99", best: true  },
-  { n: 300, price: "$9.99", best: false },
+  { n: 15,   price: "$1",   best: false },
+  { n: 80,   price: "$5",   best: false },
+  { n: 180,  price: "$10",  best: false },
+  { n: 400,  price: "$20",  best: true  },
+  { n: 1200, price: "$50",  best: false },
+  { n: 3000, price: "$100", best: false },
 ];
 const PLAY_COST = 1;
 const DROP_COST = 2;
@@ -890,10 +894,10 @@ function MiniPlayer({ p, progress, playing, onToggle, onExpand }: {
 /* ----------------------------------------------------------------------------
    Full-screen player
    ---------------------------------------------------------------------------- */
-function FullPlayer({ p, progress, playing, onToggle, onSkip, onPrev, onReply, onReact, userReact, onCollapse, idx, total }: {
+function FullPlayer({ p, progress, playing, onToggle, onSkip, onPrev, onReply, onReact, userReact, onCollapse, idx, total, isOwn }: {
   p: typeof SEED[0]; progress: number; playing: boolean; onToggle: () => void; onSkip: () => void;
   onPrev: () => void; onReply: () => void; onReact: (key: string) => void; userReact: string | undefined;
-  onCollapse: () => void; idx: number; total: number;
+  onCollapse: () => void; idx: number; total: number; isOwn: boolean;
 }) {
   const mc = MOOD[p.mood];
   const elapsed = Math.round(p.secs * progress);
@@ -955,7 +959,19 @@ function FullPlayer({ p, progress, playing, onToggle, onSkip, onPrev, onReply, o
         {REACTIONS.map((r) => {
           const on = userReact === r.key;
           return (
-            <button key={r.key} onClick={() => onReact(r.key)} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 99, cursor: "pointer", border: `1px solid ${on ? r.color : C.line}`, background: on ? hexA(r.color, "22") : "transparent", color: on ? r.color : C.textDim, fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>
+            <button
+              key={r.key}
+              onClick={() => { if (!isOwn) onReact(r.key); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 7, padding: "9px 14px",
+                borderRadius: 99, fontFamily: MONO, fontSize: 12, fontWeight: 600,
+                cursor: isOwn ? "not-allowed" : "pointer",
+                opacity: isOwn ? 0.35 : 1,
+                border: `1px solid ${on ? r.color : C.line}`,
+                background: on ? hexA(r.color, "22") : "transparent",
+                color: on ? r.color : C.textDim,
+              }}
+            >
               <span style={{ fontSize: 14 }}>{r.glyph}</span>
               {(p.reacts as Record<string, number>)[r.key] || 0}
             </button>
@@ -993,8 +1009,8 @@ function Sheet({ children, onClose, accent = C.green }: { children: React.ReactN
 /* ----------------------------------------------------------------------------
    Reply sheet
    ---------------------------------------------------------------------------- */
-function ReplySheet({ ping, onClose, onAddReply, uid, myHandle }: {
-  ping: typeof SEED[0]; onClose: () => void; onAddReply: () => void; uid: string; myHandle: string;
+function ReplySheet({ ping, onClose, onAddReply, uid, myHandle, credits, onPlayReply }: {
+  ping: typeof SEED[0]; onClose: () => void; onAddReply: () => void; uid: string; myHandle: string; credits: number; onPlayReply: () => boolean;
 }) {
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
@@ -1037,6 +1053,7 @@ function ReplySheet({ ping, onClose, onAddReply, uid, myHandle }: {
 
   const send = async () => {
     if (!audioBlob) return;
+    if (credits < 1) { setMicError("Not enough credits. Top up to hum."); return; }
     setUploading(true); setMicError(null);
     try {
       const fd = new FormData();
@@ -1062,7 +1079,10 @@ function ReplySheet({ ping, onClose, onAddReply, uid, myHandle }: {
     const audio = humAudioRef.current;
     if (!audio || !audioUrl) return;
     if (playingKey === key) { audio.pause(); setPlayingKey(null); }
-    else { audio.src = audioUrl; audio.play().catch(() => {}); setPlayingKey(key); }
+    else {
+      if (!onPlayReply()) return;
+      audio.src = audioUrl; audio.play().catch(() => {}); setPlayingKey(key);
+    }
   };
 
   return (
@@ -1468,8 +1488,22 @@ function ActivityFeed({ items, onOpen }: { items: ActivityItem[]; onOpen: (title
    ---------------------------------------------------------------------------- */
 function CreditChip({ credits, freeLeft, onClick, low }: { credits: number; freeLeft: number; onClick: () => void; low: boolean }) {
   return (
-    <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: 99, cursor: "pointer", border: `1px solid ${low ? C.amber : hexA(C.green, "66")}`, background: low ? hexA(C.amber, "1A") : C.panel2, color: low ? C.amber : C.green, fontFamily: MONO, fontSize: 13, fontWeight: 700 }}>
-      {freeLeft > 0 ? <span style={{ color: C.greenSoft }}>♪ {freeLeft}</span> : <span>◆ {credits}</span>}
+    <button onClick={onClick} style={{
+      display: "inline-flex", alignItems: "center", gap: 0,
+      borderRadius: 99, cursor: "pointer",
+      border: `1.5px solid ${low ? hexA(C.amber, "55") : hexA(C.green, "38")}`,
+      background: low ? hexA(C.amber, "0E") : hexA(C.green, "0A"),
+      overflow: "hidden", fontFamily: MONO, fontSize: 12, fontWeight: 700,
+    }}>
+      <span style={{ padding: "6px 11px", display: "flex", alignItems: "center", gap: 5, color: C.cyan }}>
+        <span style={{ fontSize: 11 }}>♪</span>
+        <span>{freeLeft}</span>
+      </span>
+      <span style={{ width: 1, alignSelf: "stretch", background: low ? hexA(C.amber, "40") : hexA(C.green, "30") }} />
+      <span style={{ padding: "6px 11px", display: "flex", alignItems: "center", gap: 5, color: low ? C.amber : C.green }}>
+        <span style={{ fontSize: 10 }}>◆</span>
+        <span>{credits}</span>
+      </span>
     </button>
   );
 }
@@ -1594,9 +1628,17 @@ function GlobalStyle() {
 /* ----------------------------------------------------------------------------
    Root
    ---------------------------------------------------------------------------- */
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
+
 export default function Nearhum() {
   const [onboarded, setOnboarded] = useState(false);
   const [myHandle, setMyHandle] = useState("—");
+
+  const [pwaPrompt, setPwaPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [pwaDismissed, setPwaDismissed] = useState(false);
 
   const [tab, setTab] = useState("feed");
   const [pings, setPings] = useState<typeof SEED>([] as typeof SEED);
@@ -1652,6 +1694,30 @@ export default function Nearhum() {
       setAuthChecked(true);
     });
     return () => unsub();
+  }, []);
+
+  // Service worker + PWA install prompt
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setPwaPrompt(e as BeforeInstallPromptEvent);
+    };
+    const onInstalled = () => {
+      setPwaPrompt(null);
+      const uid = auth.currentUser?.uid;
+      if (uid) {
+        updateDoc(doc(firestore, "users", uid), { pwaInstalledAt: new Date().toISOString() }).catch(() => {});
+      }
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
   }, []);
 
   // IP city lookup — runs once on login, saves city + state to user doc
@@ -1863,6 +1929,23 @@ export default function Nearhum() {
   const skip = () => { if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ""; } setIdx((x) => (x + 1) % pings.length); setProgress(0); };
   const prev = () => { if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ""; } setIdx((x) => (x - 1 + pings.length) % pings.length); setProgress(0); };
 
+  const chargePlay = (): boolean => {
+    const uid = auth.currentUser?.uid;
+    if (freeLeft > 0) {
+      setFreeLeft((f) => f - 1);
+      if (uid) updateDoc(doc(firestore, "users", uid), { plays: increment(-1) }).catch(() => {});
+      return true;
+    }
+    if (credits >= PLAY_COST) {
+      setCredits((c) => c - PLAY_COST);
+      setLedger((l) => [{ label: "Played a hum reply", delta: -PLAY_COST }, ...l].slice(0, 16));
+      if (uid) updateDoc(doc(firestore, "users", uid), { credits: increment(-PLAY_COST) }).catch(() => {});
+      return true;
+    }
+    setTopupOpen(true);
+    return false;
+  };
+
   const addReply = () => {
     const uid = auth.currentUser?.uid;
     if (uid) {
@@ -1880,21 +1963,34 @@ export default function Nearhum() {
     flash("Hum sent · −1 credit");
   };
 
+  const bumpReact = (dropId: string, key: string, delta: number) => {
+    setPings((prev) => prev.map((p) => {
+      if (p.id !== dropId) return p;
+      const r = { ...(p.reacts as Record<string, number>) };
+      r[key] = Math.max(0, (r[key] || 0) + delta);
+      return { ...p, reacts: r as typeof p.reacts };
+    }));
+  };
+
   const react = (key: string) => {
     if (!cur) return;
     const id = cur.id;
     const uid = auth.currentUser?.uid;
+    const ownerUid = (cur as unknown as { ownerUid: string }).ownerUid;
+    if (!uid || uid === ownerUid) return;
     const had = userReacts[id];
 
     if (had === key) {
       setUserReacts((prev) => { const next = { ...prev }; delete next[id]; return next; });
+      bumpReact(id, key, -1);
       updateDoc(doc(firestore, "drops", id), { [`reacts.${key}`]: increment(-1) }).catch(() => {});
     } else {
       setUserReacts((prev) => ({ ...prev, [id]: key }));
+      bumpReact(id, key, 1);
+      if (had) bumpReact(id, had, -1);
       const updates: Record<string, unknown> = { [`reacts.${key}`]: increment(1) };
       if (had) updates[`reacts.${had}`] = increment(-1);
       updateDoc(doc(firestore, "drops", id), updates).catch(() => {});
-      const ownerUid = (cur as unknown as { ownerUid: string }).ownerUid;
       if (uid && ownerUid && ownerUid !== uid) {
         addDoc(collection(firestore, "users", ownerUid, "activity"), {
           type: "react", who: myHandle, react: key,
@@ -1947,19 +2043,45 @@ export default function Nearhum() {
 
         {tab === "feed" && (
           <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Mark size={30} knock={C.bg} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <Mark size={42} knock={C.bg} />
                 <div>
-                  <h1 style={{ margin: 0, fontFamily: MONO, fontSize: 20, letterSpacing: 2, color: C.text, fontWeight: 700 }}>nearhum</h1>
-                  <p style={{ margin: "2px 0 0", fontSize: 11, color: C.dim }}>the hum of voices near you</p>
+                  <h1 style={{ margin: 0, fontFamily: MONO, fontSize: 17, letterSpacing: 4, color: C.text, fontWeight: 800, textTransform: "uppercase" }}>nearhum</h1>
+                  <p style={{ margin: "3px 0 0", fontSize: 10, color: C.dimmer, letterSpacing: 1, fontFamily: MONO }}>the hum of voices near you</p>
                 </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <CreditChip credits={credits} freeLeft={freeLeft} low={freeLeft === 0 && credits < 2} onClick={() => setTopupOpen(true)} />
-                <button onClick={() => setDropOpen(true)} style={{ width: 52, height: 52, borderRadius: 99, border: "none", background: C.green, color: C.bg, fontSize: 26, cursor: "pointer", boxShadow: `0 6px 20px ${hexA(C.green, "55")}` }}>＋</button>
+                <button onClick={() => setDropOpen(true)} style={{ width: 44, height: 44, borderRadius: 99, border: "none", background: C.green, color: C.bg, fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 4px 18px ${hexA(C.green, "65")}` }}>＋</button>
               </div>
             </div>
+
+            {pwaPrompt && !pwaDismissed && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", marginBottom: 16, borderRadius: 16, background: `linear-gradient(120deg, ${hexA(C.green, "12")}, ${C.card})`, border: `1px solid ${hexA(C.green, "40")}` }}>
+                <span style={{ fontSize: 22, flexShrink: 0 }}>📲</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 650, color: C.text, marginBottom: 2 }}>Add Nearhum to your home screen</div>
+                  <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>One tap for instant local hums</div>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!pwaPrompt) return;
+                    await pwaPrompt.prompt();
+                    const { outcome } = await pwaPrompt.userChoice;
+                    if (outcome === "accepted") {
+                      const uid = auth.currentUser?.uid;
+                      if (uid) updateDoc(doc(firestore, "users", uid), { pwaInstalledAt: new Date().toISOString() }).catch(() => {});
+                    }
+                    setPwaPrompt(null);
+                  }}
+                  style={{ flexShrink: 0, padding: "8px 14px", borderRadius: 99, border: "none", background: C.green, color: C.bg, fontFamily: MONO, fontSize: 11, fontWeight: 700, letterSpacing: 1, cursor: "pointer" }}
+                >
+                  INSTALL
+                </button>
+                <button onClick={() => setPwaDismissed(true)} style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 99, border: "none", background: "transparent", color: C.dim, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+              </div>
+            )}
 
             <LoudestHero p={[...pings].sort((a, b) => b.plays - a.plays)[0] ?? null} onOpen={(id) => { jump(id); setExpanded(true); }} />
             <MoodFilter active={moodFilter} onPick={setMoodFilter} />
@@ -2059,8 +2181,8 @@ export default function Nearhum() {
       {cur && <MiniPlayer p={cur} progress={progress} playing={playing} onToggle={() => setPlaying((v) => !v)} onExpand={() => setExpanded(true)} />}
       <TabBar tab={tab} setTab={(t) => { setTab(t); if (t === "activity") setTimeout(markActivityRead, 1200); }} unread={unread} />
 
-      {cur && expanded && <FullPlayer p={cur} progress={progress} playing={playing} idx={idx} total={pings.length} userReact={userReacts[cur.id]} onReact={react} onToggle={() => setPlaying((v) => !v)} onSkip={skip} onPrev={prev} onReply={() => setSheetOpen(true)} onCollapse={() => setExpanded(false)} />}
-      {cur && sheetOpen && <ReplySheet ping={cur} onClose={() => setSheetOpen(false)} onAddReply={addReply} uid={auth.currentUser?.uid ?? ""} myHandle={myHandle} />}
+      {cur && expanded && <FullPlayer p={cur} progress={progress} playing={playing} idx={idx} total={pings.length} userReact={userReacts[cur.id]} onReact={react} onToggle={() => setPlaying((v) => !v)} onSkip={skip} onPrev={prev} onReply={() => setSheetOpen(true)} onCollapse={() => setExpanded(false)} isOwn={auth.currentUser?.uid === (cur as unknown as { ownerUid: string }).ownerUid} />}
+      {cur && sheetOpen && <ReplySheet ping={cur} onClose={() => setSheetOpen(false)} onAddReply={addReply} uid={auth.currentUser?.uid ?? ""} myHandle={myHandle} credits={credits} onPlayReply={chargePlay} />}
       {dropOpen && <DropSheet onClose={() => setDropOpen(false)} onDrop={dropPing} credits={credits} handle={myHandle} uid={auth.currentUser?.uid ?? ""} place={place} lat={myCoords?.lat ?? null} lng={myCoords?.lng ?? null} />}
       {topupOpen && <TopUp credits={credits} plays={freeLeft} onClose={() => setTopupOpen(false)} onBuy={buy} />}
       {locOpen && <LocationSheet place={place} onClose={() => setLocOpen(false)} onPick={(p) => { setPlace(p); setLocOpen(false); setIdx(0); setProgress(0); flash(p.startsWith("Near me") ? "Back to your block" : `Tuned in to ${p}`); }} />}
