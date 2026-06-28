@@ -4543,12 +4543,6 @@ export default function Nearhum() {
     if (totalReplies === 1) unlockAchievement({ icon: "🎙️", title: "First Reply", detail: "Someone answered your drop with their voice" });
   }, [activity.length]);
 
-  // Track plays milestone
-  useEffect(() => {
-    const totalPlays = myPosts.reduce((s, p) => s + p.plays, 0);
-    if (totalPlays >= 50) unlockAchievement({ icon: "🎯", title: "50 Plays", detail: "Your voice has been heard 50 times" });
-    if (totalPlays >= 100) unlockAchievement({ icon: "💫", title: "100 Plays", detail: "Your voice has reached 100 plays" });
-  }, [myPosts.reduce((s, p) => s + p.plays, 0)]);
 
   // Streak tracking — count consecutive days with at least one drop
   useEffect(() => {
