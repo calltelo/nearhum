@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { auth, firestore } from "@/app/firebase/config";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, setDoc, getDoc, collection, addDoc, query, orderBy, onSnapshot } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, collection, addDoc, query, orderBy, onSnapshot, increment } from "firebase/firestore";
 
 /* ============================================================================
    NEARHUM — the hum of voices near you
@@ -185,6 +185,23 @@ const ACTIVITY_SEED = [
 /* ----------------------------------------------------------------------------
    Small helpers
    ---------------------------------------------------------------------------- */
+function haversineMi(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const R = 3958.8, toRad = (d: number) => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function fmtDist(mi: number) {
+  if (mi < 0.05) return "on your block";
+  return `${mi < 10 ? Math.round(mi * 10) / 10 : Math.round(mi)} mi`;
+}
+function timeAgo(iso: string) {
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  if (m < 1440) return `${Math.floor(m / 60)}h`;
+  return `${Math.floor(m / 1440)}d`;
+}
 function hexA(hex: string, a: string) {
   return hex + a;
 }
@@ -348,8 +365,17 @@ function Onboarding({ onDone }: { onDone: (handle: string) => void }) {
   const [password, setPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const locationRef = useRef<GeolocationCoordinates | null>(null);
 
   const next = () => setStep((s) => s + 1);
+
+  const requestLocation = () => {
+    if (!navigator.geolocation) { next(); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { locationRef.current = pos.coords; next(); },
+      () => next()
+    );
+  };
 
   const handleAuth = async () => {
     if (!email.trim() || !password.trim()) return;
@@ -357,18 +383,29 @@ function Onboarding({ onDone }: { onDone: (handle: string) => void }) {
     setAuthLoading(true);
     setAuthError(null);
     try {
+      const loc = locationRef.current;
+      const locFields = loc ? { location: { lat: loc.latitude, lng: loc.longitude, grantedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } } : {};
       if (mode === "signup") {
         const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-        setDoc(doc(firestore, "users", cred.user.uid), {
+        const uid = cred.user.uid;
+        setDoc(doc(firestore, "users", uid), {
           handle: handle.trim(),
           email: email.trim(),
           createdAt: new Date().toISOString(),
-        }).catch(() => {}); // non-fatal — auth is what matters
+          ...locFields,
+        }).catch(() => {});
+        addDoc(collection(firestore, "users", uid, "activity"), {
+          type: "system",
+          detail: "Welcome to Nearhum. Your first 8 credits are on us.",
+          at: new Date().toISOString(),
+          unread: true,
+        }).catch(() => {});
       } else {
         const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
         try {
           const snap = await getDoc(doc(firestore, "users", cred.user.uid));
           if (snap.exists()) setHandle((snap.data().handle as string) || "—");
+          if (loc) updateDoc(doc(firestore, "users", cred.user.uid), { "location.lat": loc.latitude, "location.lng": loc.longitude, "location.updatedAt": new Date().toISOString() }).catch(() => {});
         } catch { /* Firestore unavailable, proceed anyway */ }
       }
       next();
@@ -464,7 +501,7 @@ function Onboarding({ onDone }: { onDone: (handle: string) => void }) {
             exact spot is never shown to anyone.
           </p>
           <div style={{ flex: 1 }} />
-          <Btn onClick={next}>ALLOW LOCATION</Btn>
+          <Btn onClick={requestLocation}>ALLOW LOCATION</Btn>
           <Btn ghost onClick={next}>NOT NOW</Btn>
         </div>
       )}
@@ -944,13 +981,15 @@ function ReplySheet({ ping, onClose, onAddReply }: { ping: typeof SEED[0]; onClo
 /* ----------------------------------------------------------------------------
    Drop composer
    ---------------------------------------------------------------------------- */
-function DropSheet({ onClose, onDrop, credits, handle, uid, place }: {
+function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
   onClose: () => void;
   onDrop: (d: { title: string; mood: string; secs: number; audioUrl: string; dropId: string }) => void;
   credits: number;
   handle: string;
   uid: string;
   place: string;
+  lat: number | null;
+  lng: number | null;
 }) {
   const [stage, setStage] = useState("record");
   const [title, setTitle] = useState("");
@@ -1015,6 +1054,7 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place }: {
         uid, handle,
         title: title.trim(), mood, secs: recSecs,
         audioUrl, place,
+        ...(lat !== null ? { lat, lng } : {}),
         plays: 0, ttl: 24.0,
         reacts: { felt: 0, same: 0, loud: 0 },
         replies: [],
@@ -1384,19 +1424,28 @@ export default function Nearhum() {
   const [ledger, setLedger] = useState([{ label: "Welcome bonus", delta: 8 }]);
 
   const [userReacts, setUserReacts] = useState<Record<string, string>>({});
-  const [activity, setActivity] = useState(ACTIVITY_SEED);
+  const [activity, setActivity] = useState<typeof ACTIVITY_SEED>([] as typeof ACTIVITY_SEED);
   const [notif, setNotif] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [myCoords, setMyCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [cityLabel, setCityLabel] = useState("");
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
           const snap = await getDoc(doc(firestore, "users", user.uid));
-          if (snap.exists()) setMyHandle((snap.data().handle as string) || "—");
-        } catch { /* Firestore unavailable, keep default handle */ }
+          if (snap.exists()) {
+            setMyHandle((snap.data().handle as string) || "—");
+            const loc = snap.data().location;
+            if (loc?.lat && loc?.lng) setMyCoords({ lat: loc.lat as number, lng: loc.lng as number });
+            const city = snap.data().city as string | undefined;
+            const state = snap.data().state as string | undefined;
+            if (city && state) setCityLabel(`${city.toUpperCase()}, ${state}`);
+          }
+        } catch { /* Firestore unavailable */ }
         setOnboarded(true);
       }
       setAuthChecked(true);
@@ -1404,31 +1453,106 @@ export default function Nearhum() {
     return () => unsub();
   }, []);
 
-  // Live feed from Firestore — subscribe once auth is confirmed
+  // IP city lookup — runs once on login, saves city + state to user doc
+  useEffect(() => {
+    if (!onboarded) return;
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    fetch("https://ipapi.co/json/")
+      .then((r) => r.json())
+      .then((d) => {
+        const city = d.city as string;
+        const state = d.region_code as string;
+        if (city && state) {
+          setCityLabel(`${city.toUpperCase()}, ${state}`);
+          updateDoc(doc(firestore, "users", uid), { city, state, ipLat: d.latitude, ipLng: d.longitude }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, [onboarded]);
+
+  // Location heartbeat — runs immediately on login then every 5 minutes
+  useEffect(() => {
+    if (!onboarded || !navigator.geolocation) return;
+    const save = () => {
+      const uid = auth.currentUser?.uid;
+      if (!uid) return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setMyCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          updateDoc(doc(firestore, "users", uid), {
+            "location.lat": pos.coords.latitude,
+            "location.lng": pos.coords.longitude,
+            "location.updatedAt": new Date().toISOString(),
+          }).catch(() => {});
+        },
+        () => {}
+      );
+    };
+    save();
+    const hb = setInterval(save, 5 * 60 * 1000);
+    return () => clearInterval(hb);
+  }, [onboarded]);
+
+  // Live feed from Firestore — re-subscribes when coords update to re-sort
   useEffect(() => {
     if (!onboarded) return;
     const q = query(collection(firestore, "drops"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
-      const drops = snap.docs.map((d) => {
+      const raw = snap.docs.map((d) => {
+        const data = d.data();
+        const dLat = data.lat as number | undefined;
+        const dLng = data.lng as number | undefined;
+        const distMi = (myCoords && dLat && dLng)
+          ? haversineMi(myCoords.lat, myCoords.lng, dLat, dLng)
+          : null;
+        return {
+          ping: {
+            id: d.id,
+            handle: (data.handle as string) || "—",
+            secs: (data.secs as number) || 0,
+            mood: (data.mood as string) || "Raw",
+            title: (data.title as string) || "",
+            body: "",
+            dist: distMi !== null ? fmtDist(distMi) : "nearby",
+            plays: (data.plays as number) || 0,
+            ttl: (data.ttl as number) || 24.0,
+            reacts: (data.reacts as { felt: number; same: number; loud: number }) || { felt: 0, same: 0, loud: 0 },
+            replies: (data.replies as typeof SEED[0]["replies"]) || [],
+            audioUrl: (data.audioUrl as string) || "",
+            ownerUid: (data.uid as string) || "",
+          } as typeof SEED[0],
+          distMi: distMi ?? Infinity,
+        };
+      });
+      raw.sort((a, b) => a.distMi - b.distMi);
+      setPings(raw.map((r) => r.ping));
+      setFeedLoading(false);
+    }, () => setFeedLoading(false));
+    return () => unsub();
+  }, [onboarded, myCoords]);
+
+  // Real-time activity feed for this user
+  useEffect(() => {
+    if (!onboarded) return;
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const q = query(collection(firestore, "users", uid, "activity"), orderBy("at", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      setActivity(snap.docs.map((d) => {
         const data = d.data();
         return {
           id: d.id,
-          handle: (data.handle as string) || "—",
-          secs: (data.secs as number) || 0,
-          mood: (data.mood as string) || "Raw",
+          type: (data.type as string) || "system",
+          who: (data.who as string) || "",
+          react: (data.react as string) || "",
           title: (data.title as string) || "",
-          body: "",
-          dist: (data.place as string) || "nearby",
-          plays: (data.plays as number) || 0,
-          ttl: (data.ttl as number) || 24.0,
-          reacts: (data.reacts as { felt: number; same: number; loud: number }) || { felt: 0, same: 0, loud: 0 },
-          replies: (data.replies as typeof SEED[0]["replies"]) || [],
-          audioUrl: (data.audioUrl as string) || "",
-        } as typeof SEED[0];
-      });
-      setPings(drops);
-      setFeedLoading(false);
-    }, () => setFeedLoading(false));
+          detail: (data.detail as string) || "",
+          ago: timeAgo((data.at as string) || new Date().toISOString()),
+          unread: (data.unread as boolean) ?? true,
+        } as typeof ACTIVITY_SEED[0];
+      }));
+    }, () => {});
     return () => unsub();
   }, [onboarded]);
 
@@ -1489,7 +1613,8 @@ export default function Nearhum() {
     if (!audio) return;
     const onTime = () => { if (audio.duration) setProgress(audio.currentTime / audio.duration); };
     const onEnded = () => {
-      setPings((prev) => prev.map((pp, k) => k === idxRef.current ? { ...pp, plays: pp.plays + 1 } : pp));
+      const finishedId = pings[idxRef.current]?.id;
+      if (finishedId) updateDoc(doc(firestore, "drops", finishedId), { plays: increment(1) }).catch(() => {});
       setIdx((x) => (x + 1) % Math.max(pings.length, 1));
       setProgress(0);
     };
@@ -1518,8 +1643,31 @@ export default function Nearhum() {
   };
 
   const react = (key: string) => {
+    if (!cur) return;
     const id = cur.id;
-    setUserReacts((prev) => { const had = prev[id]; const next = { ...prev }; if (had === key) delete next[id]; else next[id] = key; return next; });
+    const uid = auth.currentUser?.uid;
+    setUserReacts((prev) => {
+      const had = prev[id];
+      const next = { ...prev };
+      if (had === key) {
+        delete next[id];
+        updateDoc(doc(firestore, "drops", id), { [`reacts.${key}`]: increment(-1) }).catch(() => {});
+      } else {
+        next[id] = key;
+        const updates: Record<string, unknown> = { [`reacts.${key}`]: increment(1) };
+        if (had) updates[`reacts.${had}`] = increment(-1);
+        updateDoc(doc(firestore, "drops", id), updates).catch(() => {});
+        const ownerUid = (cur as unknown as { ownerUid: string }).ownerUid;
+        if (uid && ownerUid && ownerUid !== uid) {
+          addDoc(collection(firestore, "users", ownerUid, "activity"), {
+            type: "react", who: myHandle, react: key,
+            title: cur.title, dropId: id,
+            at: new Date().toISOString(), unread: true,
+          }).catch(() => {});
+        }
+      }
+      return next;
+    });
   };
 
   const dropPing = ({ title, mood, secs, audioUrl, dropId }: { title: string; mood: string; secs: number; audioUrl: string; dropId: string }) => {
@@ -1583,7 +1731,7 @@ export default function Nearhum() {
 
             <button onClick={() => setLocOpen(true)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "transparent", border: "none", padding: 0, margin: "0 0 12px", cursor: "pointer" }}>
               <span style={{ color: C.green, fontSize: 13 }}>📍</span>
-              <span style={{ fontFamily: MONO, fontSize: 12, color: C.text, letterSpacing: 1, fontWeight: 700 }}>{place.replace("Near me · ", "").toUpperCase()}</span>
+              <span style={{ fontFamily: MONO, fontSize: 12, color: C.text, letterSpacing: 1, fontWeight: 700 }}>{myCoords ? "NEARBY" : cityLabel || place.replace("Near me · ", "").toUpperCase()}</span>
               <span style={{ color: C.dim, fontSize: 11 }}>▾</span>
               <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 1 }}>{shown.length} LIVE</span>
             </button>
@@ -1678,7 +1826,7 @@ export default function Nearhum() {
 
       {cur && expanded && <FullPlayer p={cur} progress={progress} playing={playing} idx={idx} total={pings.length} userReact={userReacts[cur.id]} onReact={react} onToggle={() => setPlaying((v) => !v)} onSkip={skip} onPrev={prev} onReply={() => setSheetOpen(true)} onCollapse={() => setExpanded(false)} />}
       {cur && sheetOpen && <ReplySheet ping={cur} onClose={() => setSheetOpen(false)} onAddReply={addReply} />}
-      {dropOpen && <DropSheet onClose={() => setDropOpen(false)} onDrop={dropPing} credits={credits} handle={myHandle} uid={auth.currentUser?.uid ?? ""} place={place} />}
+      {dropOpen && <DropSheet onClose={() => setDropOpen(false)} onDrop={dropPing} credits={credits} handle={myHandle} uid={auth.currentUser?.uid ?? ""} place={place} lat={myCoords?.lat ?? null} lng={myCoords?.lng ?? null} />}
       {topupOpen && <TopUp credits={credits} onClose={() => setTopupOpen(false)} onBuy={buy} />}
       {locOpen && <LocationSheet place={place} onClose={() => setLocOpen(false)} onPick={(p) => { setPlace(p); setLocOpen(false); setIdx(0); setProgress(0); flash(p.startsWith("Near me") ? "Back to your block" : `Tuned in to ${p}`); }} />}
       {settingsOpen && <Settings handle={myHandle} anon={myHandle === "—"} notif={notif} onToggleNotif={() => setNotif((v) => !v)} onClose={() => setSettingsOpen(false)} onSignOut={async () => { await signOut(auth); setMyHandle("—"); setSettingsOpen(false); setOnboarded(false); }} />}
