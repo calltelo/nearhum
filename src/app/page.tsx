@@ -1901,8 +1901,8 @@ export default function Nearhum() {
   useEffect(() => {
     if (!onboarded || !playing) return;
     const id = pings[idx]?.id;
-    const pingOwner = (pings[idx] as unknown as { ownerUid: string }).ownerUid;
-    if (!id || charged.includes(id) || myDropIds.includes(id) || pingOwner === auth.currentUser?.uid) return;
+    const pingOwner = (pings[idx] as unknown as { ownerUid?: string } | undefined)?.ownerUid ?? "";
+    if (!id || charged.includes(id) || myDropIds.includes(id) || (pingOwner && pingOwner === auth.currentUser?.uid)) return;
     if (freeLeft > 0) {
       setFreeLeft((f) => f - 1);
       setCharged((s) => [...s, id]);
