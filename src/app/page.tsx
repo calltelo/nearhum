@@ -273,23 +273,30 @@ function Mark({ size = 28, knock = C.bg }: { size?: number; knock?: string }) {
 /* ----------------------------------------------------------------------------
    Waveforms + equalizer
    ---------------------------------------------------------------------------- */
-function ProgWave({ n = 40, color, progress = 0, h = 28, gap = 2, seed = 2 }: {
-  n?: number; color: string; progress?: number; h?: number; gap?: number; seed?: number;
+function ProgWave({ n = 40, color, progress = 0, h = 28, gap = 2, seed = 2, playing = false }: {
+  n?: number; color: string; progress?: number; h?: number; gap?: number; seed?: number; playing?: boolean;
 }) {
   const bars = [];
   for (let i = 0; i < n; i++) {
-    const played = i / n <= progress;
+    const ratio = i / n;
+    const played = ratio <= progress;
+    const isHead = played && (i + 1) / n > progress;
     const height = 14 + Math.abs(Math.sin(i * 1.3 + seed)) * 86;
     bars.push(
       <span
         key={i}
         style={{
           flex: 1,
-          background: played ? color : C.line,
+          background: isHead ? C.text : played ? color : C.line,
           height: `${height}%`,
           borderRadius: 3,
-          opacity: played ? 1 : 0.38,
-          transition: "background .12s, opacity .12s",
+          opacity: isHead ? 1 : played ? 0.9 : 0.3,
+          transition: "background .1s, opacity .1s",
+          transformOrigin: "center",
+          ...(playing && played && !isHead ? {
+            animation: `playWave ${0.52 + (i % 5) * 0.09}s ease-in-out infinite`,
+            animationDelay: `${(i * 41) % 500}ms`,
+          } : {}),
         }}
       />
     );
@@ -947,7 +954,7 @@ function FullPlayer({ p, progress, playing, onToggle, onSkip, onPrev, onReply, o
         </div>
         <div style={{ fontSize: 33, fontWeight: 780, color: C.text, lineHeight: 1.15, letterSpacing: -0.5, marginBottom: 14 }}>{p.title}</div>
         <p style={{ fontSize: 14, color: C.textDim, lineHeight: 1.5, margin: "0 0 30px" }}>{p.body}</p>
-        <ProgWave n={42} color={mc} progress={progress} h={96} gap={3} seed={p.id.length} />
+        <ProgWave n={42} color={mc} progress={progress} h={96} gap={3} seed={p.id.length} playing={playing} />
         <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 11, color: C.dim, marginTop: 12 }}>
           <span>{fmtSecs(elapsed)}</span>
           <span>▶ {p.plays} listening</span>
@@ -1614,6 +1621,7 @@ function GlobalStyle() {
       button:focus-visible,input:focus-visible{outline:2px solid ${C.greenSoft};outline-offset:2px}
       input::placeholder,textarea::placeholder{color:${C.dim}}
       ::-webkit-scrollbar{display:none}
+      @keyframes playWave{0%,100%{transform:scaleY(0.78)}50%{transform:scaleY(1.22)}}
       @keyframes eqA{0%,100%{height:30%}50%{height:100%}}
       @keyframes eqB{0%,100%{height:80%}50%{height:40%}}
       @keyframes eqC{0%,100%{height:50%}50%{height:90%}}
