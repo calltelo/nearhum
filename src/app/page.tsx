@@ -497,7 +497,7 @@ function Onboarding({ onDone }: { onDone: (handle: string) => void }) {
             Hear what your block is saying.
           </h1>
           <p style={{ fontSize: 15, color: C.textDim, lineHeight: 1.6, margin: 0 }}>
-            Nearhum is a voice network for exactly where you're standing. Drop a 15-second voice,
+            Nearhum is a voice network for exactly where you're standing. Drop a 60-second voice,
             hear the ones near you, reply in your own voice. It plays itself — like a radio of your
             neighborhood.
           </p>
@@ -1025,7 +1025,7 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
   // Tick the timer while recording
   useEffect(() => {
     if (!recording) return;
-    const i = setInterval(() => setRecSecs((s) => Math.min(s + 1, 15)), 1000);
+    const i = setInterval(() => setRecSecs((s) => Math.min(s + 1, 60)), 1000);
     return () => clearInterval(i);
   }, [recording]);
 
@@ -1052,7 +1052,7 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
       mrRef.current = mr;
       setRecSecs(0);
       setRecording(true);
-      autoStopRef.current = setTimeout(stopRec, 15000);
+      autoStopRef.current = setTimeout(stopRec, 60000);
     } catch {
       setMicError("Microphone access denied. Allow mic in browser settings.");
     }
@@ -1104,16 +1104,16 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
           <Dots i={0} />
           <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginBottom: 4, textAlign: "center" }}>STEP 1 · DROP YOUR VOICE</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 24, textAlign: "center" }}>Say your piece</div>
-          <ProgWave n={32} color={C.green} progress={recording ? recSecs / 15 : 0} h={64} gap={3} />
+          <ProgWave n={32} color={C.green} progress={recording ? recSecs / 60 : 0} h={64} gap={3} />
           <div style={{ textAlign: "center", fontFamily: MONO, fontSize: 28, color: recording ? C.red : C.dim, margin: "18px 0" }}>
-            {fmtSecs(recSecs)} <span style={{ fontSize: 13 }}>/ 0:15</span>
+            {fmtSecs(recSecs)} <span style={{ fontSize: 13 }}>/ 1:00</span>
           </div>
           {micError && <div style={{ fontFamily: MONO, fontSize: 11, color: C.red, marginBottom: 12, textAlign: "center", lineHeight: 1.4 }}>{micError}</div>}
           <button
             onClick={() => recording ? stopRec() : startRec()}
             style={{ width: "100%", padding: 18, borderRadius: 16, cursor: "pointer", fontFamily: MONO, fontSize: 13, letterSpacing: 2, border: `1px solid ${recording ? C.red : C.green}`, background: recording ? "#1A0A0A" : C.panel2, color: recording ? C.red : C.green }}
           >
-            {recording ? "● RECORDING — TAP TO STOP" : "○ TAP TO RECORD (15s MAX)"}
+            {recording ? "● RECORDING — TAP TO STOP" : "○ TAP TO RECORD (60s MAX)"}
           </button>
         </div>
       )}
