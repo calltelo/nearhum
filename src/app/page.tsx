@@ -671,6 +671,62 @@ function RippleBloom() {
 }
 
 /* ----------------------------------------------------------------------------
+   Splash loader
+   ---------------------------------------------------------------------------- */
+function Loader() {
+  return (
+    <div style={{
+      position: "fixed", inset: 0,
+      background: `radial-gradient(130% 90% at 50% 10%, ${hexA(C.green, "16")}, ${C.bg} 55%)`,
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      animation: "fadeIn .25s ease-out",
+    }}>
+      {/* logo + pulse rings */}
+      <div style={{ position: "relative", width: 130, height: 130, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 32 }}>
+        <svg width="130" height="130" style={{ position: "absolute", inset: 0 }}>
+          {[52, 38, 24].map((r, i) => (
+            <circle
+              key={i}
+              cx="65" cy="65" r={r}
+              fill="none"
+              stroke={C.green}
+              strokeWidth="1.5"
+              opacity={0.3 - i * 0.07}
+              style={{ animation: `bloom ${2 + i * 0.4}s ease-in-out infinite`, animationDelay: `${i * 0.22}s` }}
+            />
+          ))}
+        </svg>
+        <Mark size={62} knock={C.bg} />
+      </div>
+
+      {/* wordmark */}
+      <div style={{ fontFamily: MONO, fontSize: 18, letterSpacing: 5, color: C.text, fontWeight: 800, textTransform: "uppercase", marginBottom: 8 }}>
+        nearhum
+      </div>
+      <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer, letterSpacing: 1.5, marginBottom: 44 }}>
+        the hum of voices near you
+      </div>
+
+      {/* animated waveform bar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 4, height: 28 }}>
+        {[0, 1, 2, 3, 4].map((i) => (
+          <span
+            key={i}
+            style={{
+              width: 4, borderRadius: 99,
+              background: C.green,
+              opacity: 0.55,
+              animation: `${["eqA","eqB","eqC","eqB","eqA"][i]} ${0.8 + i * 0.1}s ease-in-out infinite`,
+              animationDelay: `${i * 0.12}s`,
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
    Mood filter chips
    ---------------------------------------------------------------------------- */
 const MOOD_DOT: Record<string, string> = {
@@ -2031,7 +2087,10 @@ export default function Nearhum() {
 
   if (!authChecked) {
     return (
-      <div style={{ minHeight: "100dvh", background: C.bg }} />
+      <>
+        <GlobalStyle />
+        <Loader />
+      </>
     );
   }
 
