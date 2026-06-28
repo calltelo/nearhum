@@ -4,7 +4,8 @@
       "Skill(run)",
       "Skill(run:*)",
       "PowerShell(npm run dev 2>&1)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/)",
+      "Bash(npx tsc *)"
     ]
   }
 }

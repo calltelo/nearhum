@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { auth, firestore } from "@/app/firebase/config";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, setDoc, getDoc, updateDoc, collection, addDoc, query, orderBy, onSnapshot, increment } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, collection, addDoc, query, orderBy, onSnapshot, increment, arrayUnion } from "firebase/firestore";
 
 /* ============================================================================
    NEARHUM — the hum of voices near you
@@ -90,6 +90,7 @@ const SEED = [
     secs: 15,
     mood: "Raw",
     title: "i got the job",
+    createdAt: "",
     body: "got the job. nobody to tell. so. telling the block i guess.",
     dist: "0.3 mi",
     plays: 88,
@@ -198,7 +199,7 @@ const ACTIVITY_SEED: ActivityItem[] = [
   { id: "a2", type: "react", who: "nightowl", react: "felt", title: "i got the job", ago: "18m", unread: true },
   { id: "a3", type: "milestone", title: "i got the job", ago: "1h", unread: false, detail: "passed 50 plays" },
   { id: "a4", type: "reply", who: "—", title: "i got the job", ago: "3h", unread: false },
-  { id: "a5", type: "system", ago: "1d", unread: false, detail: "Welcome to Nearhum. Your first 8 credits are on us." },
+  { id: "a5", type: "system", ago: "1d", unread: false, detail: "Welcome to Nearhum. Your first 7 plays and 7 credits are on us." },
 ];
 
 /* ----------------------------------------------------------------------------
@@ -389,10 +390,10 @@ function Onboarding({ onDone }: { onDone: (handle: string) => void }) {
   const next = () => setStep((s) => s + 1);
 
   const requestLocation = () => {
-    if (!navigator.geolocation) { next(); return; }
+    if (!navigator.geolocation) { setStep(2); return; }
     navigator.geolocation.getCurrentPosition(
-      (pos) => { locationRef.current = pos.coords; next(); },
-      () => next()
+      (pos) => { locationRef.current = pos.coords; setStep(2); },
+      () => setStep(2)
     );
   };
 
@@ -410,12 +411,14 @@ function Onboarding({ onDone }: { onDone: (handle: string) => void }) {
         setDoc(doc(firestore, "users", uid), {
           handle: handle.trim(),
           email: email.trim(),
+          credits: 7,
+          plays: 7,
           createdAt: new Date().toISOString(),
           ...locFields,
         }).catch(() => {});
         addDoc(collection(firestore, "users", uid, "activity"), {
           type: "system",
-          detail: "Welcome to Nearhum. Your first 8 credits are on us.",
+          detail: "Welcome to Nearhum. Your first 7 plays and 7 credits are on us.",
           at: new Date().toISOString(),
           unread: true,
         }).catch(() => {});
@@ -521,7 +524,7 @@ function Onboarding({ onDone }: { onDone: (handle: string) => void }) {
           </p>
           <div style={{ flex: 1 }} />
           <Btn onClick={requestLocation}>ALLOW LOCATION</Btn>
-          <Btn ghost onClick={next}>NOT NOW</Btn>
+          <Btn ghost onClick={() => setStep(2)}>NOT NOW</Btn>
         </div>
       )}
 
@@ -616,7 +619,7 @@ function Onboarding({ onDone }: { onDone: (handle: string) => void }) {
             You're {anon || !handle ? "anonymous" : `@${handle}`} on Nearhum.
           </h2>
           <p style={{ fontSize: 15, color: C.textDim, lineHeight: 1.6, margin: "0 0 8px" }}>
-            8 credits are on us, plus {DAILY_FREE_PLAYS} free plays a day. Press play and listen to
+            7 plays and 7 credits are on us. Press play and listen to
             your block — then drop your first voice.
           </p>
           <div style={{ flex: 1 }} />
@@ -740,7 +743,7 @@ function VoiceCard({ p, isCurrent, playing, onPick }: {
           {p.title}
         </div>
         <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 3 }}>
-          {fmtSecs(p.secs)} · ▶ {p.plays} · ◴ {p.replies.length} · ♥ {totalReacts(p.reacts)}
+          {fmtSecs(p.secs)} · ▶ {p.plays} · ◴ {p.replies.length} · ♥ {totalReacts(p.reacts)}{p.createdAt ? ` · ${timeAgo(p.createdAt)}` : ""}
         </div>
       </div>
     </button>
@@ -914,7 +917,7 @@ function FullPlayer({ p, progress, playing, onToggle, onSkip, onPrev, onReply, o
       </div>
 
       <button onClick={onReply} style={{ width: "100%", padding: 18, borderRadius: 16, border: `1px solid ${mc}`, background: hexA(mc, "1A"), color: mc, fontFamily: MONO, fontSize: 14, fontWeight: 700, letterSpacing: 1, cursor: "pointer" }}>
-        ◴ REPLY IN VOICE · {p.replies.length}
+        ◴ HUM · {p.replies.length}
       </button>
     </div>
   );
@@ -937,62 +940,143 @@ function Sheet({ children, onClose, accent = C.green }: { children: React.ReactN
 /* ----------------------------------------------------------------------------
    Reply sheet
    ---------------------------------------------------------------------------- */
-function ReplySheet({ ping, onClose, onAddReply }: { ping: typeof SEED[0]; onClose: () => void; onAddReply: () => void }) {
-  const [playing, setPlaying] = useState<string | null>(null);
+function ReplySheet({ ping, onClose, onAddReply, uid, myHandle }: {
+  ping: typeof SEED[0]; onClose: () => void; onAddReply: () => void; uid: string; myHandle: string;
+}) {
+  const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [recSecs, setRecSecs] = useState(0);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const humAudioRef = useRef<HTMLAudioElement | null>(null);
   const mc = MOOD[ping.mood];
 
   useEffect(() => {
+    const audio = new Audio();
+    humAudioRef.current = audio;
+    const onEnded = () => setPlayingKey(null);
+    audio.addEventListener("ended", onEnded);
+    return () => { audio.removeEventListener("ended", onEnded); audio.pause(); audio.src = ""; };
+  }, []);
+
+  useEffect(() => {
     if (!recording) return;
-    const i = setInterval(() => {
-      setRecSecs((s) => {
-        if (s >= 15) { setRecording(false); onAddReply(); return 0; }
-        return s + 1;
-      });
-    }, 1000);
+    const i = setInterval(() => setRecSecs((s) => { if (s >= 59) { stopRec(); return 59; } return s + 1; }), 1000);
     return () => clearInterval(i);
   }, [recording]);
 
+  const startRec = async () => {
+    setMicError(null); setAudioBlob(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = () => { setAudioBlob(new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" })); stream.getTracks().forEach((t) => t.stop()); };
+      mr.start(100); mrRef.current = mr; setRecSecs(0); setRecording(true);
+    } catch { setMicError("Microphone access denied."); }
+  };
+
+  const stopRec = () => { mrRef.current?.stop(); mrRef.current = null; setRecording(false); };
+
+  const send = async () => {
+    if (!audioBlob) return;
+    setUploading(true); setMicError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", audioBlob, `reply_${Date.now()}.webm`);
+      fd.append("upload_preset", "nearhum_drops");
+      const res = await fetch("https://api.cloudinary.com/v1_1/dvtwey6m9/video/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("Upload failed");
+      const { secure_url: audioUrl } = await res.json();
+      const createdAt = new Date().toISOString();
+      await updateDoc(doc(firestore, "drops", ping.id), {
+        replies: arrayUnion({ uid, handle: myHandle, audioUrl, secs: recSecs || 1, createdAt }),
+      });
+      onAddReply();
+      setAudioBlob(null); setRecSecs(0);
+    } catch { setMicError("Upload failed. Try again."); }
+    setUploading(false);
+  };
+
+  const togglePlay = (r: typeof SEED[0]["replies"][0], i: number) => {
+    const rx = r as unknown as { audioUrl?: string; createdAt?: string };
+    const audioUrl = rx.audioUrl || "";
+    const key = rx.createdAt || r.id || String(i);
+    const audio = humAudioRef.current;
+    if (!audio || !audioUrl) return;
+    if (playingKey === key) { audio.pause(); setPlayingKey(null); }
+    else { audio.src = audioUrl; audio.play().catch(() => {}); setPlayingKey(key); }
+  };
+
   return (
     <Sheet onClose={onClose} accent={mc}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
         <span style={{ width: 7, height: 7, borderRadius: 99, background: mc }} />
         <span style={{ fontFamily: MONO, fontSize: 11, color: mc, letterSpacing: 1 }}>{ping.mood.toUpperCase()}</span>
         <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>@{ping.handle}</span>
       </div>
-      <div style={{ fontSize: 19, fontWeight: 700, color: C.text, marginBottom: 16 }}>{ping.title}</div>
-      <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginBottom: 12 }}>
-        {ping.replies.length} VOICE {ping.replies.length === 1 ? "REPLY" : "REPLIES"}
+      <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 6 }}>{ping.title}</div>
+      <div style={{ fontFamily: MONO, fontSize: 10, color: mc, letterSpacing: 2, marginBottom: 14 }}>
+        {ping.replies.length > 0 ? `◉ ${ping.replies.length} HUM${ping.replies.length !== 1 ? "S" : ""}` : "◉ NO HUMS YET"}
       </div>
-      <div style={{ overflowY: "auto", flex: 1, marginBottom: 16 }}>
+
+      <div style={{ overflowY: "auto", flex: 1, marginBottom: 14 }}>
         {ping.replies.length === 0 && (
-          <div style={{ textAlign: "center", color: C.dim, fontSize: 13, padding: "24px 0" }}>No one's answered yet. Be the first voice.</div>
+          <div style={{ textAlign: "center", color: C.dim, fontSize: 13, padding: "28px 0", lineHeight: 1.6 }}>
+            No voice replies yet. Drop the first hum.
+          </div>
         )}
-        {ping.replies.map((r) => {
-          const on = playing === r.id;
+        {ping.replies.map((r, i) => {
+          const rx = r as unknown as { audioUrl?: string; createdAt?: string };
+          const key = rx.createdAt || r.id || String(i);
+          const on = playingKey === key;
           return (
-            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: `1px solid ${C.line}` }}>
-              <button onClick={() => setPlaying(on ? null : r.id)} style={{ width: 40, height: 40, borderRadius: 99, border: `1px solid ${mc}`, background: on ? mc : "transparent", color: on ? C.bg : mc, cursor: "pointer", flexShrink: 0, fontSize: 12 }}>
-                {on ? "❚❚" : "▶"}
-              </button>
-              <Wave n={18} active={on} color={mc} seed={r.id.length * 3} />
-              <div style={{ flexShrink: 0, textAlign: "right" }}>
-                <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>@{r.handle}</div>
-                <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>{fmtSecs(r.secs)} · {r.ago}</div>
+            <button
+              key={key}
+              onClick={() => togglePlay(r, i)}
+              style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "11px 0", background: "transparent", border: "none", borderBottom: `1px solid ${C.line}`, cursor: rx.audioUrl ? "pointer" : "default" }}
+            >
+              <div style={{ width: 40, height: 40, borderRadius: 99, flexShrink: 0, border: `1px solid ${on ? mc : C.line}`, background: on ? mc : "transparent", color: on ? C.bg : mc, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>
+                {on ? <Eq color={C.bg} size={14} /> : "▶"}
               </div>
-            </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: MONO, fontSize: 11, color: C.textDim, marginBottom: 4 }}>@{r.handle}</div>
+                <Wave n={18} active={on} color={mc} seed={(r.id || String(i)).length * 3} />
+              </div>
+              <div style={{ flexShrink: 0, textAlign: "right" }}>
+                <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>{fmtSecs(r.secs)}</div>
+                <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer }}>
+                  {rx.createdAt ? timeAgo(rx.createdAt) : (r.ago || "")}
+                </div>
+              </div>
+            </button>
           );
         })}
       </div>
-      <button
-        onMouseDown={() => { setRecSecs(0); setRecording(true); }}
-        onMouseUp={() => { if (recording) { setRecording(false); onAddReply(); setRecSecs(0); } }}
-        onClick={() => { if (!recording) { setRecSecs(0); setRecording(true); } }}
-        style={{ width: "100%", padding: 18, borderRadius: 16, cursor: "pointer", fontFamily: MONO, fontSize: 13, letterSpacing: 1.5, border: `1px solid ${recording ? C.red : mc}`, background: recording ? "#1A0A0A" : hexA(mc, "1A"), color: recording ? C.red : mc }}
-      >
-        {recording ? `● RECORDING ${recSecs}s — TAP TO SEND` : "○ HOLD TO LEAVE A VOICE REPLY"}
-      </button>
+
+      {micError && <div style={{ fontFamily: MONO, fontSize: 11, color: C.red, marginBottom: 8, textAlign: "center" }}>{micError}</div>}
+
+      {audioBlob && !recording ? (
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => { setAudioBlob(null); setRecSecs(0); }} style={{ flex: 1, padding: 15, borderRadius: 14, cursor: "pointer", fontFamily: MONO, fontSize: 12, border: `1px solid ${C.line}`, background: "transparent", color: C.dim, letterSpacing: 1 }}>
+            ✕ REDO
+          </button>
+          <button onClick={send} disabled={uploading} style={{ flex: 2, padding: 15, borderRadius: 14, cursor: uploading ? "default" : "pointer", fontFamily: MONO, fontSize: 12, border: "none", background: uploading ? C.line : mc, color: uploading ? C.dim : C.bg, letterSpacing: 1, fontWeight: 700 }}>
+            {uploading ? "SENDING..." : `▲ SEND HUM · ${fmtSecs(recSecs)}`}
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => recording ? stopRec() : startRec()}
+          style={{ width: "100%", padding: 18, borderRadius: 16, cursor: "pointer", fontFamily: MONO, fontSize: 13, letterSpacing: 1.5, border: `1px solid ${recording ? C.red : mc}`, background: recording ? "#1A0A0A" : hexA(mc, "1A"), color: recording ? C.red : mc }}
+        >
+          {recording ? `● REC ${recSecs}s — TAP TO STOP` : "○ HUM"}
+        </button>
+      )}
     </Sheet>
   );
 }
@@ -1113,7 +1197,7 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
             onClick={() => recording ? stopRec() : startRec()}
             style={{ width: "100%", padding: 18, borderRadius: 16, cursor: "pointer", fontFamily: MONO, fontSize: 13, letterSpacing: 2, border: `1px solid ${recording ? C.red : C.green}`, background: recording ? "#1A0A0A" : C.panel2, color: recording ? C.red : C.green }}
           >
-            {recording ? "● RECORDING — TAP TO STOP" : "○ TAP TO RECORD (60s MAX)"}
+            {recording ? "● RECORDING — TAP TO STOP" : "○ HUM"}
           </button>
         </div>
       )}
@@ -1438,8 +1522,8 @@ export default function Nearhum() {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [myDropIds, setMyDropIds] = useState<string[]>([]);
-  const [credits, setCredits] = useState(8);
-  const [freeLeft, setFreeLeft] = useState(DAILY_FREE_PLAYS);
+  const [credits, setCredits] = useState(0);
+  const [freeLeft, setFreeLeft] = useState(0);
   const [charged, setCharged] = useState<string[]>([]);
   const [ledger, setLedger] = useState([{ label: "Welcome bonus", delta: 8 }]);
 
@@ -1458,12 +1542,15 @@ export default function Nearhum() {
         try {
           const snap = await getDoc(doc(firestore, "users", user.uid));
           if (snap.exists()) {
-            setMyHandle((snap.data().handle as string) || "—");
-            const loc = snap.data().location;
+            const d = snap.data();
+            setMyHandle((d.handle as string) || "—");
+            const loc = d.location;
             if (loc?.lat && loc?.lng) setMyCoords({ lat: loc.lat as number, lng: loc.lng as number });
-            const city = snap.data().city as string | undefined;
-            const state = snap.data().state as string | undefined;
+            const city = d.city as string | undefined;
+            const state = d.state as string | undefined;
             if (city && state) setCityLabel(`${city.toUpperCase()}, ${state}`);
+            if (typeof d.credits === "number") setCredits(d.credits);
+            if (typeof d.plays === "number") setFreeLeft(d.plays);
           }
         } catch { /* Firestore unavailable */ }
         setOnboarded(true);
@@ -1538,9 +1625,18 @@ export default function Nearhum() {
             plays: (data.plays as number) || 0,
             ttl: (data.ttl as number) || 24.0,
             reacts: (data.reacts as { felt: number; same: number; loud: number }) || { felt: 0, same: 0, loud: 0 },
-            replies: (data.replies as typeof SEED[0]["replies"]) || [],
+            replies: ((data.replies as Array<{uid?: string; handle?: string; audioUrl?: string; secs?: number; createdAt?: string}>) || []).map((r) => ({
+              id: r.createdAt || `rep_${Math.random()}`,
+              handle: r.handle || "—",
+              secs: r.secs || 0,
+              ago: r.createdAt ? timeAgo(r.createdAt) : "now",
+              uid: r.uid || "",
+              audioUrl: r.audioUrl || "",
+              createdAt: r.createdAt || "",
+            })) as typeof SEED[0]["replies"],
             audioUrl: (data.audioUrl as string) || "",
             ownerUid: (data.uid as string) || "",
+            createdAt: (data.createdAt as string) || "",
           } as typeof SEED[0],
           distMi: distMi ?? Infinity,
         };
@@ -1589,10 +1685,18 @@ export default function Nearhum() {
     if (!onboarded || !playing) return;
     const id = pings[idx]?.id;
     if (!id || charged.includes(id) || myDropIds.includes(id)) return;
-    if (freeLeft > 0) { setFreeLeft((f) => f - 1); setCharged((s) => [...s, id]); return; }
+    if (freeLeft > 0) {
+      setFreeLeft((f) => f - 1);
+      setCharged((s) => [...s, id]);
+      const uid = auth.currentUser?.uid;
+      if (uid) updateDoc(doc(firestore, "users", uid), { plays: increment(-1) }).catch(() => {});
+      return;
+    }
     if (credits < PLAY_COST) { setPlaying(false); setTopupOpen(true); return; }
     setCredits((c) => c - PLAY_COST);
     setCharged((s) => [...s, id]);
+    const uid2 = auth.currentUser?.uid;
+    if (uid2) updateDoc(doc(firestore, "users", uid2), { credits: increment(-PLAY_COST) }).catch(() => {});
     setLedger((l) => [{ label: `Played @${pings[idx]?.handle ?? "—"}`, delta: -PLAY_COST }, ...l].slice(0, 16));
   }, [idx, playing, onboarded, charged, credits, freeLeft, pings, myDropIds]);
 
@@ -1658,8 +1762,20 @@ export default function Nearhum() {
   const prev = () => { if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ""; } setIdx((x) => (x - 1 + pings.length) % pings.length); setProgress(0); };
 
   const addReply = () => {
-    setPings((prev) => prev.map((p, i) => i === idx ? { ...p, replies: [{ id: "me" + Date.now(), handle: myHandle, secs: 8, ago: "now" }, ...p.replies] } : p));
-    flash("Voice reply sent");
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      updateDoc(doc(firestore, "users", uid), { credits: increment(-1) }).catch(() => {});
+      setCredits((c) => Math.max(0, c - 1));
+      setLedger((l) => [{ label: `Replied to @${cur?.handle ?? "—"}`, delta: -1 }, ...l].slice(0, 16));
+      const ownerUid = (cur as unknown as { ownerUid: string }).ownerUid;
+      if (ownerUid && ownerUid !== uid) {
+        addDoc(collection(firestore, "users", ownerUid, "activity"), {
+          type: "reply", who: myHandle, title: cur?.title, dropId: cur?.id,
+          at: new Date().toISOString(), unread: true,
+        }).catch(() => {});
+      }
+    }
+    flash("Hum sent · −1 credit");
   };
 
   const react = (key: string) => {
@@ -1845,7 +1961,7 @@ export default function Nearhum() {
       <TabBar tab={tab} setTab={(t) => { setTab(t); if (t === "activity") setTimeout(markActivityRead, 1200); }} unread={unread} />
 
       {cur && expanded && <FullPlayer p={cur} progress={progress} playing={playing} idx={idx} total={pings.length} userReact={userReacts[cur.id]} onReact={react} onToggle={() => setPlaying((v) => !v)} onSkip={skip} onPrev={prev} onReply={() => setSheetOpen(true)} onCollapse={() => setExpanded(false)} />}
-      {cur && sheetOpen && <ReplySheet ping={cur} onClose={() => setSheetOpen(false)} onAddReply={addReply} />}
+      {cur && sheetOpen && <ReplySheet ping={cur} onClose={() => setSheetOpen(false)} onAddReply={addReply} uid={auth.currentUser?.uid ?? ""} myHandle={myHandle} />}
       {dropOpen && <DropSheet onClose={() => setDropOpen(false)} onDrop={dropPing} credits={credits} handle={myHandle} uid={auth.currentUser?.uid ?? ""} place={place} lat={myCoords?.lat ?? null} lng={myCoords?.lng ?? null} />}
       {topupOpen && <TopUp credits={credits} onClose={() => setTopupOpen(false)} onBuy={buy} />}
       {locOpen && <LocationSheet place={place} onClose={() => setLocOpen(false)} onPick={(p) => { setPlace(p); setLocOpen(false); setIdx(0); setProgress(0); flash(p.startsWith("Near me") ? "Back to your block" : `Tuned in to ${p}`); }} />}
