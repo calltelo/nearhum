@@ -1069,6 +1069,7 @@ function ReplySheet({ ping, onClose, onAddReply, uid, myHandle, credits, onPlayR
   ping: typeof SEED[0]; onClose: () => void; onAddReply: () => void; uid: string; myHandle: string; credits: number; onPlayReply: () => boolean;
 }) {
   const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const [replyIdx, setReplyIdx] = useState(0);
   const [recording, setRecording] = useState(false);
   const [recSecs, setRecSecs] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -1077,7 +1078,14 @@ function ReplySheet({ ping, onClose, onAddReply, uid, myHandle, credits, onPlayR
   const mrRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const humAudioRef = useRef<HTMLAudioElement | null>(null);
+  const swipeX = useRef<number | null>(null);
   const mc = MOOD[ping.mood];
+
+  const goReply = (n: number) => {
+    humAudioRef.current?.pause();
+    setPlayingKey(null);
+    setReplyIdx(n);
+  };
 
   useEffect(() => {
     const audio = new Audio();
@@ -1153,38 +1161,60 @@ function ReplySheet({ ping, onClose, onAddReply, uid, myHandle, credits, onPlayR
         {ping.replies.length > 0 ? `◉ ${ping.replies.length} HUM${ping.replies.length !== 1 ? "S" : ""}` : "◉ NO HUMS YET"}
       </div>
 
-      <div style={{ overflowY: "auto", flex: 1, marginBottom: 14 }}>
-        {ping.replies.length === 0 && (
+      <div style={{ flex: 1, marginBottom: 14, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        {ping.replies.length === 0 ? (
           <div style={{ textAlign: "center", color: C.dim, fontSize: 13, padding: "28px 0", lineHeight: 1.6 }}>
             No voice replies yet. Drop the first hum.
           </div>
-        )}
-        {ping.replies.map((r, i) => {
+        ) : (() => {
+          const safeIdx = Math.min(replyIdx, ping.replies.length - 1);
+          const r = ping.replies[safeIdx];
           const rx = r as unknown as { audioUrl?: string; createdAt?: string };
-          const key = rx.createdAt || r.id || String(i);
+          const key = rx.createdAt || r.id || String(safeIdx);
           const on = playingKey === key;
           return (
-            <button
-              key={key}
-              onClick={() => togglePlay(r, i)}
-              style={{ width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "11px 0", background: "transparent", border: "none", borderBottom: `1px solid ${C.line}`, cursor: rx.audioUrl ? "pointer" : "default" }}
+            <div
+              onTouchStart={(e) => { swipeX.current = e.touches[0].clientX; }}
+              onTouchEnd={(e) => {
+                if (swipeX.current === null) return;
+                const dx = e.changedTouches[0].clientX - swipeX.current;
+                swipeX.current = null;
+                if (dx < -44 && safeIdx < ping.replies.length - 1) goReply(safeIdx + 1);
+                else if (dx > 44 && safeIdx > 0) goReply(safeIdx - 1);
+              }}
+              style={{ userSelect: "none" }}
             >
-              <div style={{ width: 40, height: 40, borderRadius: 99, flexShrink: 0, border: `1px solid ${on ? mc : C.line}`, background: on ? mc : "transparent", color: on ? C.bg : mc, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>
-                {on ? <Eq color={C.bg} size={14} /> : "▶"}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontFamily: MONO, fontSize: 11, color: C.textDim, marginBottom: 4 }}>@{r.handle}</div>
-                <Wave n={18} active={on} color={mc} seed={(r.id || String(i)).length * 3} />
-              </div>
-              <div style={{ flexShrink: 0, textAlign: "right" }}>
-                <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim }}>{fmtSecs(r.secs)}</div>
-                <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer }}>
-                  {rx.createdAt ? timeAgo(rx.createdAt) : (r.ago || "")}
+              {/* Card */}
+              <div style={{ background: C.card, border: `1px solid ${on ? mc : C.line}`, borderRadius: 20, padding: "20px 18px", marginBottom: 14, transition: "border-color .15s" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: C.textDim }}>@{r.handle}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer }}>{rx.createdAt ? timeAgo(rx.createdAt) : (r.ago || "")}</span>
+                </div>
+                <Wave n={28} active={on} color={mc} seed={(r.id || String(safeIdx)).length * 3 + 7} />
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>♪ {fmtSecs(r.secs)}</span>
+                  <button
+                    onClick={() => togglePlay(r, safeIdx)}
+                    style={{ width: 48, height: 48, borderRadius: 99, border: "none", background: on ? mc : hexA(mc, "22"), color: on ? C.bg : mc, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, cursor: rx.audioUrl ? "pointer" : "default" }}
+                  >
+                    {on ? <Eq color={C.bg} size={16} /> : "▶"}
+                  </button>
                 </div>
               </div>
-            </button>
+
+              {/* Nav row */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+                <button onClick={() => goReply(safeIdx - 1)} disabled={safeIdx === 0} style={{ width: 32, height: 32, borderRadius: 99, border: "none", background: safeIdx === 0 ? "transparent" : hexA(mc, "22"), color: safeIdx === 0 ? C.line : mc, fontSize: 16, cursor: safeIdx === 0 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {ping.replies.map((_, i) => (
+                    <button key={i} onClick={() => goReply(i)} style={{ width: i === safeIdx ? 18 : 6, height: 6, borderRadius: 99, border: "none", background: i === safeIdx ? mc : C.line, padding: 0, cursor: "pointer", transition: "width .2s, background .2s" }} />
+                  ))}
+                </div>
+                <button onClick={() => goReply(safeIdx + 1)} disabled={safeIdx === ping.replies.length - 1} style={{ width: 32, height: 32, borderRadius: 99, border: "none", background: safeIdx === ping.replies.length - 1 ? "transparent" : hexA(mc, "22"), color: safeIdx === ping.replies.length - 1 ? C.line : mc, fontSize: 16, cursor: safeIdx === ping.replies.length - 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+              </div>
+            </div>
           );
-        })}
+        })()}
       </div>
 
       {micError && <div style={{ fontFamily: MONO, fontSize: 11, color: C.red, marginBottom: 8, textAlign: "center" }}>{micError}</div>}
