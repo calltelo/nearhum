@@ -2095,8 +2095,10 @@ export default function Nearhum() {
   const dropPing = ({ title, mood, secs, audioUrl, dropId }: { title: string; mood: string; secs: number; audioUrl: string; dropId: string }) => {
     if (credits < DROP_COST) { setDropOpen(false); setTopupOpen(true); return; }
     const id = dropId;
+    const dUid = auth.currentUser?.uid;
     setMyDropIds((p) => [id, ...p]);
     setCredits((c) => c - DROP_COST);
+    if (dUid) updateDoc(doc(firestore, "users", dUid), { credits: increment(-DROP_COST) }).catch(() => {});
     setLedger((l) => [{ label: `Dropped "${title.slice(0, 16)}"`, delta: -DROP_COST }, ...l].slice(0, 16));
     setIdx(0); setProgress(0); setDropOpen(false);
     flash("Dropped to the block");
