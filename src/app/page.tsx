@@ -1942,12 +1942,14 @@ export default function Nearhum() {
       setFreeLeft((f) => f - 1);
       const uid = auth.currentUser?.uid;
       if (uid) updateDoc(doc(firestore, "users", uid), { plays: increment(-1) }).catch(() => {});
+      if (pingOwner) updateDoc(doc(firestore, "users", pingOwner), { plays: increment(-1) }).catch(() => {});
       return;
     }
     if (credits < PLAY_COST) { setPlaying(false); setTopupOpen(true); return; }
     setCredits((c) => c - PLAY_COST);
     const uid2 = auth.currentUser?.uid;
     if (uid2) updateDoc(doc(firestore, "users", uid2), { credits: increment(-PLAY_COST) }).catch(() => {});
+    if (pingOwner) updateDoc(doc(firestore, "users", pingOwner), { plays: increment(-1) }).catch(() => {});
     setLedger((l) => [{ label: `Played @${pings[idx]?.handle ?? "—"}`, delta: -PLAY_COST }, ...l].slice(0, 16));
   }, [idx, playing, onboarded, credits, freeLeft, pings, myDropIds]);
 
