@@ -1717,7 +1717,7 @@ export default function Nearhum() {
   const [myDropIds, setMyDropIds] = useState<string[]>([]);
   const [credits, setCredits] = useState(0);
   const [freeLeft, setFreeLeft] = useState(0);
-  const [charged, setCharged] = useState<string[]>([]);
+  const lastBilledRef = useRef<{ idx: number; id: string } | null>(null);
   const [ledger, setLedger] = useState([{ label: "Welcome bonus", delta: 8 }]);
 
   const [userReacts, setUserReacts] = useState<Record<string, string>>({});
@@ -1901,22 +1901,24 @@ export default function Nearhum() {
   useEffect(() => {
     if (!onboarded || !playing) return;
     const id = pings[idx]?.id;
+    if (!id) return;
+    // Deduplicate: only charge once per (idx, id) slot — but allow billing again if user replays
+    if (lastBilledRef.current?.idx === idx && lastBilledRef.current?.id === id) return;
     const pingOwner = (pings[idx] as unknown as { ownerUid?: string } | undefined)?.ownerUid ?? "";
-    if (!id || charged.includes(id) || myDropIds.includes(id) || (pingOwner && pingOwner === auth.currentUser?.uid)) return;
+    if (myDropIds.includes(id) || (pingOwner && pingOwner === auth.currentUser?.uid)) return;
+    lastBilledRef.current = { idx, id };
     if (freeLeft > 0) {
       setFreeLeft((f) => f - 1);
-      setCharged((s) => [...s, id]);
       const uid = auth.currentUser?.uid;
       if (uid) updateDoc(doc(firestore, "users", uid), { plays: increment(-1) }).catch(() => {});
       return;
     }
     if (credits < PLAY_COST) { setPlaying(false); setTopupOpen(true); return; }
     setCredits((c) => c - PLAY_COST);
-    setCharged((s) => [...s, id]);
     const uid2 = auth.currentUser?.uid;
     if (uid2) updateDoc(doc(firestore, "users", uid2), { credits: increment(-PLAY_COST) }).catch(() => {});
     setLedger((l) => [{ label: `Played @${pings[idx]?.handle ?? "—"}`, delta: -PLAY_COST }, ...l].slice(0, 16));
-  }, [idx, playing, onboarded, charged, credits, freeLeft, pings, myDropIds]);
+  }, [idx, playing, onboarded, credits, freeLeft, pings, myDropIds]);
 
   // Real audio element — lives for the lifetime of the app
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -2063,7 +2065,6 @@ export default function Nearhum() {
     if (credits < DROP_COST) { setDropOpen(false); setTopupOpen(true); return; }
     const id = dropId;
     setMyDropIds((p) => [id, ...p]);
-    setCharged((s) => [...s, id]);
     setCredits((c) => c - DROP_COST);
     setLedger((l) => [{ label: `Dropped "${title.slice(0, 16)}"`, delta: -DROP_COST }, ...l].slice(0, 16));
     setIdx(0); setProgress(0); setDropOpen(false);
