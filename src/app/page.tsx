@@ -3707,10 +3707,6 @@ export default function Nearhum() {
   const chargePlayFor = useCallback(
     (p: Ping): boolean => {
       if (playCountedRef.current.has(p.id)) return true;
-      if (p.uid === uid) {
-        playCountedRef.current.add(p.id);
-        return true; // your own voice is free
-      }
       if (freePlaysUsedRef.current < DAILY_FREE_PLAYS) {
         freePlaysUsedRef.current += 1;
         playCountedRef.current.add(p.id);
