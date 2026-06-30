@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { auth, firestore } from "@/app/firebase/config";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, setDoc, getDoc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, increment, arrayUnion, getDocs } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, collection, addDoc, query, where, orderBy, limit, onSnapshot, increment, arrayUnion, getDocs } from "firebase/firestore";
 
 /* ============================================================================
    NEARHUM — the hum of voices near you
@@ -463,6 +463,9 @@ function Onboarding({ onDone }: { onDone: (handle: string) => void }) {
           detail: "Welcome to Nearhum. Your first 7 plays and 7 credits are on us.",
           at: new Date().toISOString(),
           unread: true,
+        }).catch(() => {});
+        addDoc(collection(firestore, "users", uid, "ledger"), {
+          label: "Welcome bonus", delta: 7, at: new Date().toISOString(),
         }).catch(() => {});
       } else {
         const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -1832,7 +1835,11 @@ export default function Nearhum() {
   const [credits, setCredits] = useState(0);
   const [freeLeft, setFreeLeft] = useState(0);
   const lastBilledRef = useRef<{ idx: number; id: string } | null>(null);
-  const [ledger, setLedger] = useState([{ label: "Welcome bonus", delta: 8 }]);
+  const [ledger, setLedger] = useState<{ id: string; label: string; delta: number }[]>([]);
+  const logLedger = (label: string, delta: number) => {
+    const uid = auth.currentUser?.uid;
+    if (uid) addDoc(collection(firestore, "users", uid, "ledger"), { label, delta, at: new Date().toISOString() }).catch(() => {});
+  };
 
   const [userReacts, setUserReacts] = useState<Record<string, string>>({});
   const [activity, setActivity] = useState<ActivityItem[]>([]);
@@ -1876,6 +1883,22 @@ export default function Nearhum() {
       const d = snap.data();
       if (typeof d.credits === "number") setCredits(d.credits);
       if (typeof d.plays === "number") setFreeLeft(d.plays);
+    }, () => {});
+    return () => unsub();
+  }, [onboarded]);
+
+  // Live-sync the credit ledger from Firestore — replaces the old local-only list
+  // (which started from a hardcoded "+8 welcome bonus" that drifted from the real balance).
+  useEffect(() => {
+    if (!onboarded) return;
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const q = query(collection(firestore, "users", uid, "ledger"), orderBy("at", "desc"), limit(16));
+    const unsub = onSnapshot(q, (snap) => {
+      setLedger(snap.docs.map((d) => {
+        const data = d.data();
+        return { id: d.id, label: (data.label as string) || "", delta: (data.delta as number) || 0 };
+      }));
     }, () => {});
     return () => unsub();
   }, [onboarded]);
@@ -2063,7 +2086,7 @@ export default function Nearhum() {
     const uid2 = auth.currentUser?.uid;
     if (uid2) updateDoc(doc(firestore, "users", uid2), { credits: increment(-PLAY_COST) }).catch(() => {});
     if (pingOwner) updateDoc(doc(firestore, "users", pingOwner), { plays: increment(-1) }).catch(() => {});
-    setLedger((l) => [{ label: `Played @${pings[idx]?.handle ?? "—"}`, delta: -PLAY_COST }, ...l].slice(0, 16));
+    logLedger(`Played @${pings[idx]?.handle ?? "—"}`, -PLAY_COST);
   }, [idx, playing, onboarded, credits, freeLeft, pings, myDropIds]);
 
   // Real audio element — lives for the lifetime of the app
@@ -2148,7 +2171,7 @@ export default function Nearhum() {
       flash(`+${n} plays added`);
     } else {
       setCredits((c) => c + n);
-      setLedger((l) => [{ label: `Bought ${n} credits`, delta: n }, ...l].slice(0, 16));
+      logLedger(`Bought ${n} credits`, n);
       if (uid) updateDoc(doc(firestore, "users", uid), { credits: increment(n) }).catch(() => {});
       flash(`+${n} credits added`);
     }
@@ -2171,7 +2194,7 @@ export default function Nearhum() {
     }
     if (credits >= PLAY_COST) {
       setCredits((c) => c - PLAY_COST);
-      setLedger((l) => [{ label: "Played a hum reply", delta: -PLAY_COST }, ...l].slice(0, 16));
+      logLedger("Played a hum reply", -PLAY_COST);
       if (uid) updateDoc(doc(firestore, "users", uid), { credits: increment(-PLAY_COST) }).catch(() => {});
       return true;
     }
@@ -2184,7 +2207,7 @@ export default function Nearhum() {
     if (uid) {
       updateDoc(doc(firestore, "users", uid), { credits: increment(-1) }).catch(() => {});
       setCredits((c) => Math.max(0, c - 1));
-      setLedger((l) => [{ label: `Replied to @${cur?.handle ?? "—"}`, delta: -1 }, ...l].slice(0, 16));
+      logLedger(`Replied to @${cur?.handle ?? "—"}`, -1);
       const ownerUid = (cur as unknown as { ownerUid: string }).ownerUid;
       if (ownerUid && ownerUid !== uid) {
         addDoc(collection(firestore, "users", ownerUid, "activity"), {
@@ -2241,7 +2264,7 @@ export default function Nearhum() {
     setMyDropIds((p) => [id, ...p]);
     setCredits((c) => c - DROP_COST);
     if (dUid) updateDoc(doc(firestore, "users", dUid), { credits: increment(-DROP_COST) }).catch(() => {});
-    setLedger((l) => [{ label: `Dropped "${title.slice(0, 16)}"`, delta: -DROP_COST }, ...l].slice(0, 16));
+    logLedger(`Dropped "${title.slice(0, 16)}"`, -DROP_COST);
     setIdx(0); setProgress(0); setDropOpen(false);
     flash(`Dropped · reaches ${radiusMi} mi`);
   };
@@ -2431,8 +2454,9 @@ export default function Nearhum() {
 
             <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginBottom: 12 }}>CREDIT LEDGER</div>
             <div style={{ marginBottom: 22 }}>
-              {ledger.map((e, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
+              {ledger.length === 0 && <div style={{ textAlign: "center", color: C.dim, fontSize: 13, padding: "20px 0" }}>No transactions yet.</div>}
+              {ledger.map((e) => (
+                <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
                   <span style={{ fontSize: 13, color: C.text }}>{e.label}</span>
                   <span style={{ fontFamily: MONO, fontSize: 13, color: e.delta > 0 ? C.green : C.amber }}>{e.delta > 0 ? "+" : ""}{e.delta} ◆</span>
                 </div>
