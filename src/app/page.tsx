@@ -1617,6 +1617,7 @@ function ActivityFeed({ items, onOpen }: { items: ActivityItem[]; onOpen: (title
     if (it.type === "react") { const r = REACTIONS.find((x) => x.key === it.react); return { g: r ? r.glyph : "♥", c: r ? r.color : C.rose }; }
     if (it.type === "milestone") return { g: "✦", c: C.amber };
     if (it.type === "pin") return { g: "📍", c: C.cyan };
+    if (it.type === "pin_listened") return { g: "◴", c: C.cyan };
     return { g: "◆", c: C.cyan };
   };
   const text = (it: ActivityItem) => {
@@ -1624,6 +1625,7 @@ function ActivityFeed({ items, onOpen }: { items: ActivityItem[]; onOpen: (title
     if (it.type === "react") { const r = REACTIONS.find((x) => x.key === it.react); return `@${it.who} reacted "${r ? r.label : it.react}"`; }
     if (it.type === "milestone") return it.detail;
     if (it.type === "pin") return `@${it.who} pinned a hum to you — "${it.title}"`;
+    if (it.type === "pin_listened") return `@${it.who} listened to your pin — "${it.title}"`;
     return it.detail;
   };
   return (
@@ -2073,10 +2075,20 @@ export default function Nearhum() {
   // finishing still counts, since we mark it the moment playback reaches the end, not
   // only on the native "ended" event (which a skip/swipe can preempt).
   const playCountedRef = useRef<string | null>(null);
-  const markPlayed = (id: string) => {
+  const markPlayed = (id: string, pinnedToUid?: string | null, ownerUid?: string, title?: string) => {
     if (playCountedRef.current === id) return;
     playCountedRef.current = id;
-    updateDoc(doc(firestore, "drops", id), { plays: increment(1) }).catch(() => {});
+    // Once the recipient actually plays a pin hum, it's served its purpose — clear it
+    // so it drops out of their PIN HUMS list (the drops onSnapshot picks this up live).
+    const isMyPin = !!pinnedToUid && pinnedToUid === auth.currentUser?.uid;
+    updateDoc(doc(firestore, "drops", id), isMyPin ? { plays: increment(1), pinnedToUid: null } : { plays: increment(1) }).catch(() => {});
+    // Let the person who pinned it know it was actually heard.
+    if (isMyPin && ownerUid) {
+      addDoc(collection(firestore, "users", ownerUid, "activity"), {
+        type: "pin_listened", who: myHandle, title: title || "", dropId: id,
+        at: new Date().toISOString(), unread: true,
+      }).catch(() => {});
+    }
   };
 
   useEffect(() => {
@@ -2113,13 +2125,13 @@ export default function Nearhum() {
       if (!audio.duration) return;
       setProgress(audio.currentTime / audio.duration);
       if (audio.currentTime / audio.duration >= 0.92) {
-        const id = pings[idxRef.current]?.id;
-        if (id) markPlayed(id);
+        const p = pings[idxRef.current] as unknown as { id?: string; pinnedToUid?: string | null; ownerUid?: string; title?: string } | undefined;
+        if (p?.id) markPlayed(p.id, p.pinnedToUid, p.ownerUid, p.title);
       }
     };
     const onEnded = () => {
-      const finishedId = pings[idxRef.current]?.id;
-      if (finishedId) markPlayed(finishedId);
+      const p = pings[idxRef.current] as unknown as { id?: string; pinnedToUid?: string | null; ownerUid?: string; title?: string } | undefined;
+      if (p?.id) markPlayed(p.id, p.pinnedToUid, p.ownerUid, p.title);
       setIdx((x) => (x + 1) % Math.max(pings.length, 1));
       setProgress(0);
     };
