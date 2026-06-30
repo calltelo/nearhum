@@ -91,6 +91,14 @@ const REACTIONS = [
   { key: "loud", glyph: "✦", label: "loud", color: C.amber },
 ];
 
+const RADIUS_OPTIONS = [
+  { mi: 1, blurb: "just your block" },
+  { mi: 7, blurb: "around your area" },
+  { mi: 25, blurb: "across the city" },
+  { mi: 100, blurb: "the whole region" },
+];
+const DEFAULT_RADIUS_MI = 25;
+
 /* ----------------------------------------------------------------------------
    Seed data
    ---------------------------------------------------------------------------- */
@@ -770,7 +778,7 @@ function VoiceCard({ p, isCurrent, playing, onPick }: {
   p: typeof SEED[0]; isCurrent: boolean; playing: boolean; onPick: (id: string) => void;
 }) {
   const mc = MOOD[p.mood];
-  const pAny = p as unknown as { createdAt?: string };
+  const pAny = p as unknown as { createdAt?: string; radiusMi?: number };
   return (
     <button
       onClick={() => onPick(p.id)}
@@ -830,6 +838,9 @@ function VoiceCard({ p, isCurrent, playing, onPick }: {
         <span style={{ color: C.dim }}>▶ {p.plays}</span>
         <span style={{ color: C.dim }}>◴ {p.replies.length}</span>
         <span style={{ color: totalReacts(p.reacts) > 0 ? C.rose : C.dimmer }}>♥ {totalReacts(p.reacts)}</span>
+        {pAny.radiusMi != null && (
+          <span style={{ marginLeft: "auto", color: C.dim }}>↬ {pAny.radiusMi}mi</span>
+        )}
       </div>
     </button>
   );
@@ -1246,7 +1257,7 @@ function ReplySheet({ ping, onClose, onAddReply, uid, myHandle, credits, onPlayR
    ---------------------------------------------------------------------------- */
 function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
   onClose: () => void;
-  onDrop: (d: { title: string; mood: string; secs: number; audioUrl: string; dropId: string }) => void;
+  onDrop: (d: { title: string; mood: string; secs: number; audioUrl: string; dropId: string; radiusMi: number }) => void;
   credits: number;
   handle: string;
   uid: string;
@@ -1257,6 +1268,7 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
   const [stage, setStage] = useState("record");
   const [title, setTitle] = useState("");
   const [mood, setMood] = useState<string | null>(null);
+  const [radius, setRadius] = useState<number | null>(null);
   const [recording, setRecording] = useState(false);
   const [recSecs, setRecSecs] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -1303,7 +1315,7 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
   };
 
   const publish = async () => {
-    if (!audioBlob || !mood || !title.trim()) return;
+    if (!audioBlob || !mood || !title.trim() || !radius) return;
     setUploading(true);
     setMicError(null);
     try {
@@ -1318,12 +1330,12 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
         title: title.trim(), mood, secs: recSecs,
         audioUrl, place,
         ...(lat !== null ? { lat, lng } : {}),
-        plays: 0, ttl: 24.0,
+        plays: 0, ttl: 24.0, radiusMi: radius,
         reacts: { felt: 0, same: 0, loud: 0 },
         replies: [],
         createdAt: new Date().toISOString(),
       });
-      onDrop({ title: title.trim(), mood, secs: recSecs, audioUrl, dropId: docRef.id });
+      onDrop({ title: title.trim(), mood, secs: recSecs, audioUrl, dropId: docRef.id, radiusMi: radius });
     } catch {
       setMicError("Upload failed. Check your connection and try again.");
       setUploading(false);
@@ -1335,7 +1347,7 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
 
   const Dots = ({ i }: { i: number }) => (
     <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 20 }}>
-      {[0, 1, 2, 3].map((n) => (
+      {[0, 1, 2, 3, 4].map((n) => (
         <span key={n} style={{ width: n === i ? 22 : 6, height: 6, borderRadius: 99, background: n <= i ? mc : C.line, transition: "all .2s" }} />
       ))}
     </div>
@@ -1365,7 +1377,8 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
       {stage === "title" && (
         <div>
           <Dots i={1} />
-          <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginBottom: 10 }}>STEP 2 · WHAT'S THIS ABOUT?</div>
+          <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginBottom: 4, textAlign: "center" }}>STEP 2 · TITLE IT</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 18, textAlign: "center" }}>What's the drop?</div>
           <input autoFocus value={title} onChange={(e) => setTitle(e.target.value.slice(0, 50))} placeholder="My day at work today" style={{ width: "100%", boxSizing: "border-box", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 14, padding: "18px 16px", color: C.text, fontSize: 19, fontWeight: 650, outline: "none" }} />
           <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 10, color: C.dim, marginTop: 8 }}>
             <span style={{ color: C.green }}>✓ {fmtSecs(dur)} recorded</span>
@@ -1396,18 +1409,42 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
               );
             })}
           </div>
-          <button disabled={!mood} onClick={() => setStage("post")} style={{ width: "100%", padding: 18, borderRadius: 16, marginTop: 22, cursor: mood ? "pointer" : "default", border: "none", background: mood ? mc : C.line, color: mood ? C.bg : C.dim, fontFamily: MONO, fontSize: 13, letterSpacing: 2 }}>
+          <button disabled={!mood} onClick={() => setStage("radius")} style={{ width: "100%", padding: 18, borderRadius: 16, marginTop: 22, cursor: mood ? "pointer" : "default", border: "none", background: mood ? mc : C.line, color: mood ? C.bg : C.dim, fontFamily: MONO, fontSize: 13, letterSpacing: 2 }}>
+            NEXT — SET REACH →
+          </button>
+        </div>
+      )}
+
+      {stage === "radius" && (
+        <div>
+          <Dots i={3} />
+          <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginBottom: 6 }}>STEP 4 · HOW FAR SHOULD THIS REACH?</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 18 }}>{title}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {RADIUS_OPTIONS.map((r) => {
+              const on = radius === r.mi;
+              return (
+                <button key={r.mi} onClick={() => setRadius(r.mi)} style={{ padding: "18px 12px", borderRadius: 16, cursor: "pointer", textAlign: "left", border: `1px solid ${on ? mc : C.line}`, background: on ? hexA(mc, "1A") : "transparent", color: on ? mc : C.textDim }}>
+                  <div style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700 }}>{r.mi} MI</div>
+                  <div style={{ fontSize: 11, color: C.dim, marginTop: 6 }}>{r.blurb}</div>
+                </button>
+              );
+            })}
+          </div>
+          <button disabled={!radius} onClick={() => setStage("post")} style={{ width: "100%", padding: 18, borderRadius: 16, marginTop: 22, cursor: radius ? "pointer" : "default", border: "none", background: radius ? mc : C.line, color: radius ? C.bg : C.dim, fontFamily: MONO, fontSize: 13, letterSpacing: 2 }}>
             NEXT — REVIEW →
           </button>
         </div>
       )}
 
-      {stage === "post" && mood && (
+      {stage === "post" && mood && radius && (
         <div>
-          <Dots i={3} />
+          <Dots i={4} />
+          <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginBottom: 10, textAlign: "center" }}>STEP 5 · REVIEW &amp; POST</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
             <span style={{ width: 7, height: 7, borderRadius: 99, background: mc }} />
             <span style={{ fontFamily: MONO, fontSize: 11, color: mc, letterSpacing: 1 }}>{mood.toUpperCase()}</span>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>· reaches {radius} mi</span>
           </div>
           <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 16 }}>{title}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14 }}>
@@ -1885,9 +1922,16 @@ export default function Nearhum() {
             audioUrl: (data.audioUrl as string) || "",
             ownerUid: (data.uid as string) || "",
             createdAt: (data.createdAt as string) || "",
+            radiusMi: (data.radiusMi as number) || DEFAULT_RADIUS_MI,
           } as typeof SEED[0],
           distMi: distMi ?? Infinity,
         };
+      }).filter((r) => {
+        const ownerUid = (r.ping as unknown as { ownerUid?: string }).ownerUid;
+        if (ownerUid && ownerUid === auth.currentUser?.uid) return true;
+        if (r.distMi === Infinity) return true;
+        const radiusMi = (r.ping as unknown as { radiusMi?: number }).radiusMi ?? DEFAULT_RADIUS_MI;
+        return r.distMi <= radiusMi;
       });
       raw.sort((a, b) => a.distMi - b.distMi);
       setPings(raw.map((r) => r.ping));
@@ -2094,7 +2138,7 @@ export default function Nearhum() {
     }
   };
 
-  const dropPing = ({ title, mood, secs, audioUrl, dropId }: { title: string; mood: string; secs: number; audioUrl: string; dropId: string }) => {
+  const dropPing = ({ title, mood, secs, audioUrl, dropId, radiusMi }: { title: string; mood: string; secs: number; audioUrl: string; dropId: string; radiusMi: number }) => {
     if (credits < DROP_COST) { setDropOpen(false); setTopupOpen(true); return; }
     const id = dropId;
     const dUid = auth.currentUser?.uid;
@@ -2103,7 +2147,7 @@ export default function Nearhum() {
     if (dUid) updateDoc(doc(firestore, "users", dUid), { credits: increment(-DROP_COST) }).catch(() => {});
     setLedger((l) => [{ label: `Dropped "${title.slice(0, 16)}"`, delta: -DROP_COST }, ...l].slice(0, 16));
     setIdx(0); setProgress(0); setDropOpen(false);
-    flash("Dropped to the block");
+    flash(`Dropped · reaches ${radiusMi} mi`);
   };
 
   const openByTitle = (title: string) => {
