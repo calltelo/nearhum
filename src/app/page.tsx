@@ -182,7 +182,6 @@ const CREDIT_PACKS = [
 ];
 const PLAY_COST = 1;
 const DROP_COST = 2;
-const DAILY_FREE_PLAYS = 10;
 const WELCOME_CREDITS = 7;
 const WELCOME_PLAYS = 7;
 
@@ -3422,7 +3421,6 @@ export default function Nearhum() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playCountedRef = useRef<Set<string>>(new Set()); // charged for a play
   const markedRef = useRef<Set<string>>(new Set()); // play-count incremented + pin cleared
-  const freePlaysUsedRef = useRef(0);
   const mutedRef = useRef<Set<string>>(new Set());
   const streakDoneRef = useRef(false);
   const pwaPromptRef = useRef<{ prompt: () => void } | null>(null);
@@ -3707,11 +3705,6 @@ export default function Nearhum() {
   const chargePlayFor = useCallback(
     (p: Ping): boolean => {
       if (playCountedRef.current.has(p.id)) return true;
-      if (freePlaysUsedRef.current < DAILY_FREE_PLAYS) {
-        freePlaysUsedRef.current += 1;
-        playCountedRef.current.add(p.id);
-        return true;
-      }
       if (plays < PLAY_COST) {
         flash("Out of plays — top up to keep listening", "ear", C.cyan);
         setTopUpOpen(true);
