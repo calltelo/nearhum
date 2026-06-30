@@ -2069,6 +2069,16 @@ export default function Nearhum() {
   const idxRef = useRef(idx);
   useEffect(() => { idxRef.current = idx; }, [idx]);
 
+  // Dedup so a play only gets counted once per listen — but skipping away right after
+  // finishing still counts, since we mark it the moment playback reaches the end, not
+  // only on the native "ended" event (which a skip/swipe can preempt).
+  const playCountedRef = useRef<string | null>(null);
+  const markPlayed = (id: string) => {
+    if (playCountedRef.current === id) return;
+    playCountedRef.current = id;
+    updateDoc(doc(firestore, "drops", id), { plays: increment(1) }).catch(() => {});
+  };
+
   useEffect(() => {
     const audio = new Audio();
     audio.preload = "auto";
@@ -2099,10 +2109,17 @@ export default function Nearhum() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    const onTime = () => { if (audio.duration) setProgress(audio.currentTime / audio.duration); };
+    const onTime = () => {
+      if (!audio.duration) return;
+      setProgress(audio.currentTime / audio.duration);
+      if (audio.currentTime / audio.duration >= 0.92) {
+        const id = pings[idxRef.current]?.id;
+        if (id) markPlayed(id);
+      }
+    };
     const onEnded = () => {
       const finishedId = pings[idxRef.current]?.id;
-      if (finishedId) updateDoc(doc(firestore, "drops", finishedId), { plays: increment(1) }).catch(() => {});
+      if (finishedId) markPlayed(finishedId);
       setIdx((x) => (x + 1) % Math.max(pings.length, 1));
       setProgress(0);
     };
