@@ -91,6 +91,25 @@ const REACTIONS = [
   { key: "loud", glyph: "✦", label: "loud", color: C.amber },
 ];
 
+const TITLE_PROMPTS_NIGHT = [
+  "the 2am thought I can't shake",
+  "why am I still up",
+  "something I'd never text",
+  "the thing I keep replaying",
+];
+const TITLE_PROMPTS_DAY = [
+  "my day at work today",
+  "the small win today",
+  "something I need to get off my chest",
+  "what nobody asked but I'm saying anyway",
+  "the thing that made me laugh",
+];
+function pickTitlePrompt() {
+  const hour = new Date().getHours();
+  const pool = (hour >= 22 || hour < 5) ? TITLE_PROMPTS_NIGHT : TITLE_PROMPTS_DAY;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 const RADIUS_OPTIONS = [
   { mi: 1, blurb: "just your block" },
   { mi: 7, blurb: "around your area" },
@@ -1269,6 +1288,7 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
   const [title, setTitle] = useState("");
   const [mood, setMood] = useState<string | null>(null);
   const [radius, setRadius] = useState<number | null>(null);
+  const [titlePlaceholder] = useState(pickTitlePrompt);
   const [recording, setRecording] = useState(false);
   const [recSecs, setRecSecs] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -1379,7 +1399,7 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
           <Dots i={1} />
           <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginBottom: 4, textAlign: "center" }}>STEP 2 · TITLE IT</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 18, textAlign: "center" }}>What's the drop?</div>
-          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value.slice(0, 50))} placeholder="My day at work today" style={{ width: "100%", boxSizing: "border-box", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 14, padding: "18px 16px", color: C.text, fontSize: 19, fontWeight: 650, outline: "none" }} />
+          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value.slice(0, 50))} placeholder={titlePlaceholder} style={{ width: "100%", boxSizing: "border-box", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 14, padding: "18px 16px", color: C.text, fontSize: 19, fontWeight: 650, outline: "none" }} />
           <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 10, color: C.dim, marginTop: 8 }}>
             <span style={{ color: C.green }}>✓ {fmtSecs(dur)} recorded</span>
             <span>{title.length}/50</span>
