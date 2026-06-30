@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { auth, firestore } from "@/app/firebase/config";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, setDoc, getDoc, updateDoc, collection, addDoc, query, orderBy, onSnapshot, increment, arrayUnion } from "firebase/firestore";
+import { doc, setDoc, getDoc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, increment, arrayUnion, getDocs } from "firebase/firestore";
 
 /* ============================================================================
    NEARHUM — the hum of voices near you
@@ -263,6 +263,10 @@ function fmtSecs(s: number) {
 }
 function totalReacts(r: { felt: number; same: number; loud: number }) {
   return (r.felt || 0) + (r.same || 0) + (r.loud || 0);
+}
+function extractMention(title: string): string | null {
+  const m = title.match(/@([a-z0-9_]{1,16})/i);
+  return m ? m[1].toLowerCase() : null;
 }
 
 /* ----------------------------------------------------------------------------
@@ -1345,16 +1349,31 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
       const res = await fetch("https://api.cloudinary.com/v1_1/dvtwey6m9/video/upload", { method: "POST", body: fd });
       if (!res.ok) throw new Error("Cloudinary upload failed");
       const { secure_url: audioUrl } = await res.json();
+
+      const pinnedTo = extractMention(title);
+      let pinnedToUid: string | null = null;
+      if (pinnedTo && pinnedTo !== handle.toLowerCase()) {
+        const matches = await getDocs(query(collection(firestore, "users"), where("handle", "==", pinnedTo)));
+        if (!matches.empty) pinnedToUid = matches.docs[0].id;
+      }
+
       const docRef = await addDoc(collection(firestore, "drops"), {
         uid, handle,
         title: title.trim(), mood, secs: recSecs,
         audioUrl, place,
         ...(lat !== null ? { lat, lng } : {}),
         plays: 0, ttl: 24.0, radiusMi: radius,
+        ...(pinnedTo ? { pinnedTo, pinnedToUid } : {}),
         reacts: { felt: 0, same: 0, loud: 0 },
         replies: [],
         createdAt: new Date().toISOString(),
       });
+      if (pinnedToUid) {
+        addDoc(collection(firestore, "users", pinnedToUid, "activity"), {
+          type: "pin", who: handle, title: title.trim(), dropId: docRef.id,
+          at: new Date().toISOString(), unread: true,
+        }).catch(() => {});
+      }
       onDrop({ title: title.trim(), mood, secs: recSecs, audioUrl, dropId: docRef.id, radiusMi: radius });
     } catch {
       setMicError("Upload failed. Check your connection and try again.");
@@ -1400,6 +1419,9 @@ function DropSheet({ onClose, onDrop, credits, handle, uid, place, lat, lng }: {
           <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 2, marginBottom: 4, textAlign: "center" }}>STEP 2 · TITLE IT</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 18, textAlign: "center" }}>What's the drop?</div>
           <input autoFocus value={title} onChange={(e) => setTitle(e.target.value.slice(0, 50))} placeholder={titlePlaceholder} style={{ width: "100%", boxSizing: "border-box", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 14, padding: "18px 16px", color: C.text, fontSize: 19, fontWeight: 650, outline: "none" }} />
+          {extractMention(title) && extractMention(title) !== handle.toLowerCase() && (
+            <div style={{ fontFamily: MONO, fontSize: 11, color: C.cyan, marginTop: 8 }}>📍 Pin hum to @{extractMention(title)} — plays first for them</div>
+          )}
           <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 10, color: C.dim, marginTop: 8 }}>
             <span style={{ color: C.green }}>✓ {fmtSecs(dur)} recorded</span>
             <span>{title.length}/50</span>
@@ -1594,12 +1616,14 @@ function ActivityFeed({ items, onOpen }: { items: ActivityItem[]; onOpen: (title
     if (it.type === "reply") return { g: "◴", c: C.greenSoft };
     if (it.type === "react") { const r = REACTIONS.find((x) => x.key === it.react); return { g: r ? r.glyph : "♥", c: r ? r.color : C.rose }; }
     if (it.type === "milestone") return { g: "✦", c: C.amber };
+    if (it.type === "pin") return { g: "📍", c: C.cyan };
     return { g: "◆", c: C.cyan };
   };
   const text = (it: ActivityItem) => {
     if (it.type === "reply") return `@${it.who} replied in voice`;
     if (it.type === "react") { const r = REACTIONS.find((x) => x.key === it.react); return `@${it.who} reacted "${r ? r.label : it.react}"`; }
     if (it.type === "milestone") return it.detail;
+    if (it.type === "pin") return `@${it.who} pinned a hum to you — "${it.title}"`;
     return it.detail;
   };
   return (
@@ -1830,8 +1854,6 @@ export default function Nearhum() {
             const city = d.city as string | undefined;
             const state = d.state as string | undefined;
             if (city && state) setCityLabel(`${city.toUpperCase()}, ${state}`);
-            if (typeof d.credits === "number") setCredits(d.credits);
-            if (typeof d.plays === "number") setFreeLeft(d.plays);
           }
         } catch { /* Firestore unavailable */ }
         setOnboarded(true);
@@ -1840,6 +1862,21 @@ export default function Nearhum() {
     });
     return () => unsub();
   }, []);
+
+  // Live-sync credits + plays straight from the user doc so balances never go stale
+  // until a manual refresh — any write (billing, top-up, pin hum charges) reflects instantly.
+  useEffect(() => {
+    if (!onboarded) return;
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const unsub = onSnapshot(doc(firestore, "users", uid), (snap) => {
+      if (!snap.exists()) return;
+      const d = snap.data();
+      if (typeof d.credits === "number") setCredits(d.credits);
+      if (typeof d.plays === "number") setFreeLeft(d.plays);
+    }, () => {});
+    return () => unsub();
+  }, [onboarded]);
 
   // Service worker + PWA install prompt
   useEffect(() => {
@@ -1943,17 +1980,27 @@ export default function Nearhum() {
             ownerUid: (data.uid as string) || "",
             createdAt: (data.createdAt as string) || "",
             radiusMi: (data.radiusMi as number) || DEFAULT_RADIUS_MI,
+            pinnedTo: (data.pinnedTo as string) || null,
+            pinnedToUid: (data.pinnedToUid as string) || null,
           } as typeof SEED[0],
           distMi: distMi ?? Infinity,
         };
       }).filter((r) => {
-        const ownerUid = (r.ping as unknown as { ownerUid?: string }).ownerUid;
-        if (ownerUid && ownerUid === auth.currentUser?.uid) return true;
+        const ping = r.ping as unknown as { ownerUid?: string; pinnedToUid?: string | null };
+        const myUid = auth.currentUser?.uid;
+        if (ping.ownerUid && ping.ownerUid === myUid) return true;
+        if (ping.pinnedToUid && ping.pinnedToUid === myUid) return true;
         if (r.distMi === Infinity) return true;
         const radiusMi = (r.ping as unknown as { radiusMi?: number }).radiusMi ?? DEFAULT_RADIUS_MI;
         return r.distMi <= radiusMi;
       });
       raw.sort((a, b) => a.distMi - b.distMi);
+      const myUid = auth.currentUser?.uid;
+      raw.sort((a, b) => {
+        const aPin = (a.ping as unknown as { pinnedToUid?: string | null }).pinnedToUid === myUid ? 1 : 0;
+        const bPin = (b.ping as unknown as { pinnedToUid?: string | null }).pinnedToUid === myUid ? 1 : 0;
+        return bPin - aPin;
+      });
       setPings(raw.map((r) => r.ping));
       setFeedLoading(false);
     }, () => setFeedLoading(false));
@@ -2181,6 +2228,7 @@ export default function Nearhum() {
     const own = (p as unknown as { ownerUid: string }).ownerUid;
     return own === uid || myDropIds.includes(p.id);
   });
+  const pinHums = pings.filter((p) => (p as unknown as { pinnedToUid?: string | null }).pinnedToUid === uid);
   const shown = moodFilter === "All" ? pings : pings.filter((p) => p.mood === moodFilter);
 
   if (!authChecked) {
@@ -2261,6 +2309,31 @@ export default function Nearhum() {
               <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 1 }}>{shown.length} LIVE</span>
             </button>
             {!place.startsWith("Near me") && <div style={{ fontFamily: MONO, fontSize: 10, color: C.amber, letterSpacing: 0.5, marginBottom: 12, marginTop: -4 }}>◷ listening remotely — drop is disabled outside your area</div>}
+
+            {pinHums.length > 0 && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontFamily: MONO, fontSize: 10, color: C.cyan, letterSpacing: 2, marginBottom: 10 }}>📍 PIN HUMS · FOR YOU</div>
+                {pinHums.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => { jump(p.id); setExpanded(true); }}
+                    style={{
+                      width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12,
+                      padding: "14px 16px", marginBottom: 8, borderRadius: 16, cursor: "pointer",
+                      border: `1px solid ${hexA(C.cyan, "55")}`,
+                      background: `linear-gradient(135deg, ${hexA(C.cyan, "1A")}, ${C.card} 70%)`,
+                    }}
+                  >
+                    <span style={{ fontSize: 18, flexShrink: 0 }}>📍</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.title}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, marginTop: 2 }}>@{p.handle} pinned this to you</div>
+                    </div>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: C.cyan, flexShrink: 0 }}>▶</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {shown.map((p) => (
               <VoiceCard key={p.id} p={p} isCurrent={!!cur && p.id === cur.id} playing={playing} onPick={(id) => { jump(id); setExpanded(true); }} />
