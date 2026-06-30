@@ -2991,7 +2991,7 @@ function Settings({ onClose, handle, place, prefs, onTogglePref, onSignOut, onEd
         <Row icon="lock" label="Privacy" sub="what we store, what we don't" onClick={() => {}} />
         <Row icon="x" label="Sign out" danger onClick={onSignOut} />
       </div>
-      <p style={{ fontFamily: MONO, fontSize: 9.5, color: C.dimmer, textAlign: "center", marginTop: 16 }}>NEARHUM · v2.0</p>
+      <p style={{ fontFamily: MONO, fontSize: 9.5, color: C.dimmer, textAlign: "center", marginTop: 16 }}>NEARHUM · v7</p>
     </Sheet>
   );
 }
