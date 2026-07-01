@@ -3421,6 +3421,7 @@ export default function Nearhum() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playCountedRef = useRef<Set<string>>(new Set()); // charged for a play
   const markedRef = useRef<Set<string>>(new Set()); // play-count incremented + pin cleared
+  const knownPingIdsRef = useRef<Set<string>>(new Set()); // drops already seen in range
   const mutedRef = useRef<Set<string>>(new Set());
   const streakDoneRef = useRef(false);
   const pwaPromptRef = useRef<{ prompt: () => void } | null>(null);
@@ -3772,6 +3773,21 @@ export default function Nearhum() {
       setPlaying(false);
     }
   }, [pings, currentId, prefs.autoplay, chargePlayFor]);
+
+  /* ---- auto-play when a drop enters your range --------------------------- */
+  useEffect(() => {
+    if (playing || !prefs.autoplay) return;
+    const currentIds = new Set(pings.map((p) => p.id));
+    const newEntrants = pings.filter((p) => !knownPingIdsRef.current.has(p.id));
+    knownPingIdsRef.current = currentIds;
+    if (newEntrants.length === 0) return;
+    const next = newEntrants[0];
+    if (chargePlayFor(next)) {
+      setCurrentId(next.id);
+      setPlaying(true);
+      flash(`${next.handle} just entered your range`, "location", C.green);
+    }
+  }, [pings, playing, prefs.autoplay, chargePlayFor, flash]);
 
   /* ---- transport --------------------------------------------------------- */
   const selectVoice = (id: string, expand = true) => {
