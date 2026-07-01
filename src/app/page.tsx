@@ -3619,24 +3619,28 @@ export default function Nearhum() {
       .catch(() => {});
   }, [uid, realPlace, realLocation]);
 
-  /* ---- location heartbeat (every 5 min) ---------------------------------- */
+  /* ---- live location (fires as you move) --------------------------------- */
   useEffect(() => {
     if (!uid || !navigator.geolocation) return;
-    const beat = () =>
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setRealLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    let lastWrite = 0;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setRealLocation({ lat: latitude, lng: longitude });
+        const now = Date.now();
+        if (now - lastWrite > 60000) {
+          lastWrite = now;
           updateDoc(doc(firestore, "users", uid), {
-            "location.lat": pos.coords.latitude,
-            "location.lng": pos.coords.longitude,
+            "location.lat": latitude,
+            "location.lng": longitude,
             "location.updatedAt": new Date().toISOString(),
           }).catch(() => {});
-        },
-        () => {},
-        { maximumAge: 120000, timeout: 8000 }
-      );
-    const i = setInterval(beat, 300000);
-    return () => clearInterval(i);
+        }
+      },
+      () => {},
+      { enableHighAccuracy: false, maximumAge: 15000, timeout: 20000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
   }, [uid]);
 
   /* ---- PWA install ------------------------------------------------------- */
@@ -3690,6 +3694,25 @@ export default function Nearhum() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id, playing, prefs.sound]);
+
+  /* ---- stop playback when you walk out of the drop's radius -------------- */
+  useEffect(() => {
+    if (!currentId || !activeLoc) return;
+    const drop = rawDrops.find((d) => (d.id as string) === currentId);
+    if (!drop) return;
+    const lat = drop.lat as number | null;
+    const lng = drop.lng as number | null;
+    const radiusMi = (drop.radiusMi as number) ?? DEFAULT_RADIUS_MI;
+    if (lat != null && lng != null && haversineMi(activeLoc.lat, activeLoc.lng, lat, lng) > radiusMi) {
+      const audio = audioRef.current;
+      if (audio) { audio.pause(); audio.src = ""; }
+      setPlaying(false);
+      setExpanded(false);
+      setCurrentId("");
+      setProgress(0);
+      flash("You've walked out of range", "location", C.amber);
+    }
+  }, [activeLoc, currentId, rawDrops, flash]);
 
   /* ---- mark activity read when viewing ----------------------------------- */
   useEffect(() => {
