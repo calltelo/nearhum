@@ -311,6 +311,8 @@ type MicDrop = {
   chunks: string[];
   ended: boolean;
   endedAt: string | null;
+  costCredits?: number;
+  chargedAt?: string;
 };
 
 /* ----------------------------------------------------------------------------
@@ -2979,6 +2981,9 @@ function MicDropSheet({
     try {
       const bRef = doc(firestore, "broadcasts", key);
       const uRef = doc(firestore, "users", uid);
+      // Auto-ID'd up front so it can be written inside the transaction below —
+      // addDoc() can't be called from within runTransaction's callback.
+      const ledgerRef = doc(collection(firestore, "users", uid, "ledger"));
       await runTransaction(firestore, async (tx) => {
         const [bSnap, uSnap] = await Promise.all([tx.get(bRef), tx.get(uRef)]);
         const now = Date.now();
@@ -2988,14 +2993,25 @@ function MicDropSheet({
         if (liveCredits < MIC_DROP_COST) throw new Error("broke");
         const startedAt = new Date().toISOString();
         const expiresAt = new Date(now + MIC_DROP_MAX_SECS * 1000).toISOString();
-        tx.set(bRef, { active: true, uid, handle: myHandle, place, startedAt, expiresAt, chunks: [], ended: false, endedAt: null });
+        // The charge and the ledger entry live in the SAME transaction as the
+        // broadcast doc, so all three commit together or not at all — no more
+        // silent, best-effort writes you can't verify happened.
+        tx.set(bRef, {
+          active: true,
+          uid,
+          handle: myHandle,
+          place,
+          startedAt,
+          expiresAt,
+          chunks: [],
+          ended: false,
+          endedAt: null,
+          costCredits: MIC_DROP_COST,
+          chargedAt: startedAt,
+        });
         tx.update(uRef, { credits: increment(-MIC_DROP_COST) });
+        tx.set(ledgerRef, { label: "Mic Drop", delta: -MIC_DROP_COST, at: startedAt });
       });
-      addDoc(collection(firestore, "users", uid, "ledger"), {
-        label: "Mic Drop",
-        delta: -MIC_DROP_COST,
-        at: new Date().toISOString(),
-      }).catch(() => {});
 
       bRefRef.current = bRef;
       stoppingRef.current = false;
