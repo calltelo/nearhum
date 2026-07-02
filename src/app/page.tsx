@@ -2965,10 +2965,18 @@ function MicDropSheet({
     }
     setStarting(true);
     setErr(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
 
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setErr("Mic access denied. Turn it on in your browser settings.");
+      setStarting(false);
+      return;
+    }
+    streamRef.current = stream;
+
+    try {
       const bRef = doc(firestore, "broadcasts", key);
       const uRef = doc(firestore, "users", uid);
       await runTransaction(firestore, async (tx) => {
@@ -3008,7 +3016,7 @@ function MicDropSheet({
       const msg = e instanceof Error ? e.message : "";
       if (msg === "busy") setErr("Someone's already live in your city. Try again in a bit.");
       else if (msg === "broke") setErr("Not enough credits to drop the mic.");
-      else setErr("Mic access denied. Turn it on in your browser settings.");
+      else setErr(`Couldn't start the broadcast${msg ? `: ${msg}` : ""}. Check your connection and try again.`);
     }
     setStarting(false);
   };
