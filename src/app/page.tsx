@@ -3809,6 +3809,14 @@ export default function Nearhum() {
   const [micDropOpen, setMicDropOpen] = useState(false);
   const [liveBroadcast, setLiveBroadcast] = useState<MicDrop | null>(null);
   const interruptedForRef = useRef<string | null>(null);
+  // Mirrors micDropOpen without forcing the broadcasts subscription to
+  // resubscribe on every open/close — only THIS tab's live sheet should
+  // suppress the interrupt; every other tab/device on the same account
+  // (or a different account) should still get taken over.
+  const micDropOpenRef = useRef(false);
+  useEffect(() => {
+    micDropOpenRef.current = micDropOpen;
+  }, [micDropOpen]);
 
   // toast
   const [toast, setToast] = useState<{ msg: string; icon?: string; color?: string } | null>(null);
@@ -3978,7 +3986,11 @@ export default function Nearhum() {
       }
       const d = snap.data() as MicDrop;
       const isLive = d.active && new Date(d.expiresAt).getTime() > Date.now();
-      if (!isLive || d.uid === uid) {
+      // Only the tab actually running the live MicDropSheet suppresses its
+      // own overlay — every other tab/device (including your own, on the
+      // same account) still gets taken over, matching "every phone nearby."
+      const isMyOwnActiveSheet = d.uid === uid && micDropOpenRef.current;
+      if (!isLive || isMyOwnActiveSheet) {
         setLiveBroadcast(null);
         return;
       }
