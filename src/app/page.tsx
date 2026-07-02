@@ -23,6 +23,7 @@ import {
   increment,
   arrayUnion,
   getDocs,
+  runTransaction,
 } from "firebase/firestore";
 
 /* ============================================================================
@@ -185,6 +186,12 @@ const DROP_COST = 2;
 const WELCOME_CREDITS = 7;
 const WELCOME_PLAYS = 7;
 
+// Mic Drop — the block-wide interrupt. Costs more than a normal drop and caps
+// hard at 60s; only one may be live per city at a time (see cityKey below).
+const MIC_DROP_COST = 10;
+const MIC_DROP_MAX_SECS = 60;
+const MIC_DROP_CHUNK_MS = 3000;
+
 /* ----------------------------------------------------------------------------
    REACTIONS
    Voice-first means reactions are tiny and wordless. Three is the whole set.
@@ -293,6 +300,19 @@ type Ping = {
 };
 type Prefs = { sound: boolean; autoplay: boolean; notif: boolean; reduceMotion: boolean };
 
+// A live Mic Drop broadcast — one doc per city, doubles as the per-city lock.
+type MicDrop = {
+  active: boolean;
+  uid: string;
+  handle: string;
+  place: string;
+  startedAt: string;
+  expiresAt: string;
+  chunks: string[];
+  ended: boolean;
+  endedAt: string | null;
+};
+
 /* ----------------------------------------------------------------------------
    HELPERS
    ---------------------------------------------------------------------------- */
@@ -375,6 +395,16 @@ function isLateNight() {
   const h = new Date().getHours();
   return h >= 22 || h < 5;
 }
+// Slugifies a "City, ST" place string into a stable Firestore doc id — the
+// key both the broadcast lock and every listener subscription are keyed on.
+function cityKey(place: string) {
+  const slug = place
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-+|-+$)/g, "");
+  return slug || "global";
+}
 function dayKey(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
     d.getDate()
@@ -446,6 +476,7 @@ const PATHS: Record<string, string> = {
   trophy: "M7 4h10v4a5 5 0 0 1-10 0V4Z M7 6H4v2a3 3 0 0 0 3 3 M17 6h3v2a3 3 0 0 1-3 3 M9 17h6 M10 17l.5-3h3l.5 3 M8 21h8",
   clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z M12 7v5l3 2",
   refresh: "M21 12a9 9 0 1 1-2.6-6.3 M21 3v5h-5",
+  broadcast: "M12 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z M8.5 14a5 5 0 0 1 7 0 M5.5 11a9 9 0 0 1 13 0",
 };
 
 function I({
@@ -2837,6 +2868,366 @@ function DropSheet({
   );
 }
 
+/* ----------------------------------------------------------------------------
+   MIC DROP SHEET
+   The interrupt. Costs MIC_DROP_COST credits, locked to one live broadcast per
+   city at a time — a transaction claims the city's broadcast doc and spends
+   the credits atomically, so a busy city is never charged. Records in
+   MIC_DROP_CHUNK_MS slices: a fresh MediaRecorder every slice, since only the
+   first blob out of a single recorder's timeslices carries a valid webm
+   header — each chunk needs to be an independently playable file.
+   ---------------------------------------------------------------------------- */
+function MicDropSheet({
+  onClose,
+  uid,
+  myHandle,
+  credits,
+  place,
+  canDrop,
+}: {
+  onClose: () => void;
+  uid: string;
+  myHandle: string;
+  credits: number;
+  place: string;
+  canDrop: boolean;
+}) {
+  const [stage, setStage] = useState<0 | 1>(0);
+  const [starting, setStarting] = useState(false);
+  const [recSecs, setRecSecs] = useState(0);
+  const [chunksSent, setChunksSent] = useState(0);
+  const [err, setErr] = useState<string | null>(null);
+
+  const streamRef = useRef<MediaStream | null>(null);
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const secsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bRefRef = useRef<ReturnType<typeof doc> | null>(null);
+  const stoppingRef = useRef(false);
+
+  const key = cityKey(place);
+
+  const cleanupStream = () => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    mrRef.current = null;
+  };
+
+  const recordChunk = () => {
+    const stream = streamRef.current;
+    if (!stream || stoppingRef.current) return;
+    const mr = new MediaRecorder(stream);
+    const parts: Blob[] = [];
+    mr.ondataavailable = (e) => {
+      if (e.data.size > 0) parts.push(e.data);
+    };
+    mr.onstop = async () => {
+      const blob = new Blob(parts, { type: mr.mimeType || "audio/webm" });
+      if (blob.size > 0 && bRefRef.current) {
+        try {
+          const fd = new FormData();
+          fd.append("file", blob, `micdrop_${Date.now()}.webm`);
+          fd.append("upload_preset", "nearhum_drops");
+          const res = await fetch("https://api.cloudinary.com/v1_1/dvtwey6m9/video/upload", { method: "POST", body: fd });
+          if (res.ok) {
+            const { secure_url } = await res.json();
+            await updateDoc(bRefRef.current, { chunks: arrayUnion(secure_url) });
+            setChunksSent((n) => n + 1);
+          }
+        } catch {
+          /* this slice is lost, the broadcast keeps going */
+        }
+      }
+      if (!stoppingRef.current) recordChunk();
+    };
+    mrRef.current = mr;
+    mr.start();
+    setTimeout(() => {
+      if (mrRef.current === mr) mr.stop();
+    }, MIC_DROP_CHUNK_MS);
+  };
+
+  const endBroadcast = async () => {
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
+    if (secsTimerRef.current) clearInterval(secsTimerRef.current);
+    mrRef.current?.stop();
+    cleanupStream();
+    if (bRefRef.current) {
+      await updateDoc(bRefRef.current, { active: false, ended: true, endedAt: new Date().toISOString() }).catch(() => {});
+    }
+    onClose();
+  };
+
+  const start = async () => {
+    if (credits < MIC_DROP_COST) {
+      setErr("Not enough credits to drop the mic.");
+      return;
+    }
+    setStarting(true);
+    setErr(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      const bRef = doc(firestore, "broadcasts", key);
+      const uRef = doc(firestore, "users", uid);
+      await runTransaction(firestore, async (tx) => {
+        const [bSnap, uSnap] = await Promise.all([tx.get(bRef), tx.get(uRef)]);
+        const now = Date.now();
+        const b = bSnap.exists() ? (bSnap.data() as MicDrop) : null;
+        if (b?.active && new Date(b.expiresAt).getTime() > now) throw new Error("busy");
+        const liveCredits = (uSnap.data()?.credits as number) ?? 0;
+        if (liveCredits < MIC_DROP_COST) throw new Error("broke");
+        const startedAt = new Date().toISOString();
+        const expiresAt = new Date(now + MIC_DROP_MAX_SECS * 1000).toISOString();
+        tx.set(bRef, { active: true, uid, handle: myHandle, place, startedAt, expiresAt, chunks: [], ended: false, endedAt: null });
+        tx.update(uRef, { credits: increment(-MIC_DROP_COST) });
+      });
+      addDoc(collection(firestore, "users", uid, "ledger"), {
+        label: "Mic Drop",
+        delta: -MIC_DROP_COST,
+        at: new Date().toISOString(),
+      }).catch(() => {});
+
+      bRefRef.current = bRef;
+      stoppingRef.current = false;
+      setStage(1);
+      vibrate(16);
+      recordChunk();
+      secsTimerRef.current = setInterval(() => {
+        setRecSecs((s) => {
+          if (s + 1 >= MIC_DROP_MAX_SECS) {
+            endBroadcast();
+            return MIC_DROP_MAX_SECS;
+          }
+          return s + 1;
+        });
+      }, 1000);
+    } catch (e) {
+      cleanupStream();
+      const msg = e instanceof Error ? e.message : "";
+      if (msg === "busy") setErr("Someone's already live in your city. Try again in a bit.");
+      else if (msg === "broke") setErr("Not enough credits to drop the mic.");
+      else setErr("Mic access denied. Turn it on in your browser settings.");
+    }
+    setStarting(false);
+  };
+
+  // Release the mic + stop the broadcast if the sheet unmounts mid-drop.
+  useEffect(
+    () => () => {
+      if (!stoppingRef.current) {
+        stoppingRef.current = true;
+        if (secsTimerRef.current) clearInterval(secsTimerRef.current);
+        mrRef.current?.stop();
+        cleanupStream();
+        if (bRefRef.current) {
+          updateDoc(bRefRef.current, { active: false, ended: true, endedAt: new Date().toISOString() }).catch(() => {});
+        }
+      }
+    },
+    []
+  );
+
+  return (
+    <Sheet onClose={stage === 1 ? () => {} : onClose} accent={C.red}>
+      {stage === 0 && (
+        <div style={{ textAlign: "center", padding: "6px 0 4px" }}>
+          <div style={{ width: 64, height: 64, borderRadius: 99, margin: "0 auto 16px", background: hexA(C.red, "16"), border: `1px solid ${hexA(C.red, "44")}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <I name="broadcast" size={28} color={C.red} />
+          </div>
+          <div style={{ fontSize: 19, fontWeight: 750, color: C.text, marginBottom: 6 }}>Drop the mic.</div>
+          <p style={{ fontSize: 13, color: C.dim, lineHeight: 1.6, margin: "0 0 20px" }}>
+            Every phone in {place || "your area"} stops what it's playing and hears you live, up to {MIC_DROP_MAX_SECS}s. Only one drop can be live at a time.
+          </p>
+          {!canDrop && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: hexA(C.amber, "12"), border: `1px solid ${hexA(C.amber, "44")}`, borderRadius: 12, padding: "10px 12px", marginBottom: 14, textAlign: "left" }}>
+              <I name="location" size={14} color={C.amber} />
+              <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.amberSoft, lineHeight: 1.4 }}>You're listening from another area. You can only drop the mic where you actually are.</span>
+            </div>
+          )}
+          {err && <div style={{ fontFamily: MONO, fontSize: 11, color: C.red, marginBottom: 14, lineHeight: 1.4 }}>{err}</div>}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "11px 14px", marginBottom: 16 }}>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>cost to drop</span>
+            <span style={{ fontFamily: MONO, fontSize: 13, color: credits >= MIC_DROP_COST ? C.red : C.amber, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <I name="spark" size={12} color={credits >= MIC_DROP_COST ? C.red : C.amber} /> {MIC_DROP_COST} credits
+            </span>
+          </div>
+          <button
+            onClick={start}
+            disabled={starting || !canDrop || credits < MIC_DROP_COST}
+            style={{
+              width: "100%",
+              padding: 18,
+              borderRadius: 16,
+              border: "none",
+              cursor: starting || !canDrop ? "default" : "pointer",
+              fontFamily: MONO,
+              fontSize: 14,
+              fontWeight: 700,
+              letterSpacing: 1.5,
+              background: !canDrop || credits < MIC_DROP_COST ? C.line : C.red,
+              color: !canDrop || credits < MIC_DROP_COST ? C.dim : "#fff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 9,
+            }}
+          >
+            {starting ? (
+              "GOING LIVE…"
+            ) : (
+              <>
+                <I name="broadcast" size={16} color={!canDrop || credits < MIC_DROP_COST ? C.dim : "#fff"} /> DROP THE MIC
+              </>
+            )}
+          </button>
+          <button onClick={onClose} style={{ width: "100%", background: "transparent", border: "none", color: C.dim, fontFamily: MONO, fontSize: 11, letterSpacing: 1, padding: "12px 0 0", cursor: "pointer" }}>CANCEL</button>
+        </div>
+      )}
+
+      {stage === 1 && (
+        <div style={{ textAlign: "center", padding: "10px 0 4px" }}>
+          <div style={{ marginBottom: 14 }}>
+            <LiveDot label="LIVE NOW" color={C.red} />
+          </div>
+          <div style={{ position: "relative", width: 150, height: 150, margin: "0 auto 18px" }}>
+            <svg width="150" height="150" style={{ position: "absolute", inset: 0 }}>
+              {[62, 48, 34].map((r, i) => (
+                <circle key={i} cx="75" cy="75" r={r} fill="none" stroke={C.red} strokeWidth="2" opacity={0.4 - i * 0.1} style={{ animation: `bloom ${1.6 + i * 0.3}s ease-in-out infinite` }} />
+              ))}
+            </svg>
+            <div style={{ position: "absolute", inset: 35, borderRadius: 99, border: `2px solid ${C.red}`, background: "#1A0A0A", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <I name="mic" size={30} color={C.red} sw={1.7} />
+            </div>
+          </div>
+          <div style={{ fontFamily: MONO, fontSize: 22, color: C.red, letterSpacing: 1 }}>
+            {fmtSecs(recSecs)} <span style={{ fontSize: 12, color: C.dimmer }}>/ {fmtSecs(MIC_DROP_MAX_SECS)}</span>
+          </div>
+          <div style={{ fontFamily: MONO, fontSize: 10, color: C.dim, letterSpacing: 1.5, marginTop: 8 }}>
+            {chunksSent} CHUNKS SENT · LIVE IN {(place || "YOUR AREA").toUpperCase()}
+          </div>
+          <button
+            onClick={endBroadcast}
+            style={{ width: "100%", marginTop: 22, padding: 18, borderRadius: 16, border: "none", cursor: "pointer", fontFamily: MONO, fontSize: 14, fontWeight: 700, letterSpacing: 1.5, background: C.red, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 9 }}
+          >
+            <I name="stop" size={16} color="#fff" /> END BROADCAST
+          </button>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   MIC DROP LIVE OVERLAY
+   The interrupt itself, mounted above everything the instant a broadcast goes
+   live in your city. Owns its own <audio> element (never the feed's
+   audioRef) and plays chunks in arrival order as they land in Firestore,
+   naturally trailing a few seconds behind the broadcaster. No skip, no scrub —
+   it's a broadcast, not a track. Closes itself once the doc ends and the
+   queue has fully played out.
+   ---------------------------------------------------------------------------- */
+function MicDropLiveOverlay({ broadcast, onEnded }: { broadcast: MicDrop; onEnded: () => void }) {
+  const [elapsed, setElapsed] = useState(0);
+  const [playingChunk, setPlayingChunk] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const queueRef = useRef<string[]>([]);
+  const playedCountRef = useRef(0);
+  const playingRef = useRef(false);
+
+  const playNext = useCallback(() => {
+    const audio = audioRef.current;
+    const next = queueRef.current.shift();
+    if (!audio || !next) {
+      playingRef.current = false;
+      setPlayingChunk(false);
+      return;
+    }
+    playingRef.current = true;
+    audio.src = next;
+    audio
+      .play()
+      .then(() => setPlayingChunk(true))
+      .catch(() => {
+        playingRef.current = false;
+        setPlayingChunk(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    const audio = new Audio();
+    audio.preload = "auto";
+    audio.addEventListener("ended", playNext);
+    audioRef.current = audio;
+    return () => {
+      audio.removeEventListener("ended", playNext);
+      audio.pause();
+      audio.src = "";
+      audioRef.current = null;
+    };
+  }, [playNext]);
+
+  useEffect(() => {
+    const fresh = broadcast.chunks.slice(playedCountRef.current);
+    if (fresh.length === 0) return;
+    playedCountRef.current = broadcast.chunks.length;
+    queueRef.current.push(...fresh);
+    if (!playingRef.current) playNext();
+  }, [broadcast.chunks, playNext]);
+
+  useEffect(() => {
+    const isOver = broadcast.ended || new Date(broadcast.expiresAt).getTime() < Date.now();
+    if (isOver && queueRef.current.length === 0 && !playingRef.current) onEnded();
+  }, [broadcast.ended, broadcast.expiresAt, playingChunk, onEnded]);
+
+  useEffect(() => {
+    const i = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(i);
+  }, []);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 200,
+        background: `radial-gradient(120% 90% at 50% 0%, ${hexA(C.red, "22")}, ${C.bg} 65%)`,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        animation: "fadeIn .2s ease-out",
+      }}
+    >
+      <LiveDot label="MIC DROP" color={C.red} />
+      <div style={{ position: "relative", width: 180, height: 180, margin: "26px 0 22px" }}>
+        <svg width="180" height="180" style={{ position: "absolute", inset: 0 }}>
+          {[74, 58, 42].map((r, i) => (
+            <circle key={i} cx="90" cy="90" r={r} fill="none" stroke={C.red} strokeWidth="2" opacity={playingChunk ? 0.45 - i * 0.1 : 0.15} style={{ animation: `bloom ${1.6 + i * 0.3}s ease-in-out infinite` }} />
+          ))}
+        </svg>
+        <div style={{ position: "absolute", inset: 45, borderRadius: 99, border: `2px solid ${C.red}`, background: "#1A0A0A", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <I name="broadcast" size={34} color={C.red} />
+        </div>
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 780, color: C.text, marginBottom: 6, textAlign: "center" }}>@{broadcast.handle} is live</div>
+      <div style={{ fontFamily: MONO, fontSize: 12, color: C.dim, marginBottom: 4 }}>
+        {broadcast.place || "nearby"} · {fmtSecs(elapsed)}
+      </div>
+      <div style={{ marginTop: 20 }}>
+        <Wave n={30} active={playingChunk} color={C.red} seed={4} />
+      </div>
+      <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer, letterSpacing: 1, marginTop: 26, textAlign: "center", lineHeight: 1.6 }}>
+        everyone in {broadcast.place || "the area"} is hearing this right now
+        <br />
+        ends automatically
+      </div>
+    </div>
+  );
+}
+
 /* Shared sheet button used by the composer and other sheets. */
 function SheetBtn({ children, onClick, disabled, ghost, accent = C.green }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; ghost?: boolean; accent?: string }) {
   return (
@@ -3407,6 +3798,9 @@ export default function Nearhum() {
   const [reportTarget, setReportTarget] = useState<Ping | null>(null);
   const [reactTarget, setReactTarget] = useState<Ping | null>(null);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [micDropOpen, setMicDropOpen] = useState(false);
+  const [liveBroadcast, setLiveBroadcast] = useState<MicDrop | null>(null);
+  const interruptedForRef = useRef<string | null>(null);
 
   // toast
   const [toast, setToast] = useState<{ msg: string; icon?: string; color?: string } | null>(null);
@@ -3564,6 +3958,37 @@ export default function Nearhum() {
     );
     return () => unsub();
   }, [uid]);
+
+  /* ---- mic drop — one live broadcast per city, watched by everyone in it -- */
+  useEffect(() => {
+    if (!uid || !realPlace) return;
+    const key = cityKey(realPlace);
+    const unsub = onSnapshot(doc(firestore, "broadcasts", key), (snap) => {
+      if (!snap.exists()) {
+        setLiveBroadcast(null);
+        return;
+      }
+      const d = snap.data() as MicDrop;
+      const isLive = d.active && new Date(d.expiresAt).getTime() > Date.now();
+      if (!isLive || d.uid === uid) {
+        setLiveBroadcast(null);
+        return;
+      }
+      setLiveBroadcast(d);
+      if (interruptedForRef.current !== d.startedAt) {
+        interruptedForRef.current = d.startedAt;
+        const audio = audioRef.current;
+        if (audio) {
+          audio.pause();
+          audio.src = "";
+        }
+        setPlaying(false);
+        setExpanded(false);
+        vibrate([30, 40, 30]);
+      }
+    });
+    return () => unsub();
+  }, [uid, realPlace]);
 
   /* ---- activity ---------------------------------------------------------- */
   useEffect(() => {
@@ -3971,6 +4396,17 @@ export default function Nearhum() {
         <button onClick={() => setSearchOpen(true)} style={{ width: 38, height: 38, borderRadius: 99, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <I name="search" size={19} color={C.dim} />
         </button>
+        <button
+          onClick={() => {
+            audioRef.current?.pause();
+            setPlaying(false);
+            setMicDropOpen(true);
+          }}
+          title="Mic Drop — interrupt your block"
+          style={{ width: 38, height: 38, borderRadius: 99, border: `1px solid ${hexA(C.red, "44")}`, background: hexA(C.red, "14"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <I name="broadcast" size={17} color={C.red} />
+        </button>
         <CreditChip plays={plays} credits={credits} onClick={() => setTopUpOpen(true)} />
       </div>
 
@@ -4282,7 +4718,20 @@ export default function Nearhum() {
 
       {editProfileOpen && <EditProfileSheet handle={myHandle} onClose={() => setEditProfileOpen(false)} onSave={saveHandle} />}
 
+      {micDropOpen && (
+        <MicDropSheet
+          onClose={() => setMicDropOpen(false)}
+          uid={uid}
+          myHandle={myHandle}
+          credits={credits}
+          place={realPlace}
+          canDrop={canDrop}
+        />
+      )}
+
       {showCoach && <CoachMarks onClose={closeCoach} />}
+
+      {liveBroadcast && <MicDropLiveOverlay broadcast={liveBroadcast} onEnded={() => setLiveBroadcast(null)} />}
 
       <Toast toast={toast} />
     </div>
