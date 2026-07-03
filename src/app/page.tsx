@@ -3895,7 +3895,7 @@ export default function Nearhum() {
       })
       .filter((p) => p.ttl > 0)
       .filter((p) => !mutedRef.current.has(p.handle))
-      .filter((p) => (p.distMi != null ? p.distMi <= p.radiusMi : true))
+      .filter((p) => (p.distMi != null ? p.distMi <= p.radiusMi || p.uid === uid : true))
       .filter((p) => moodFilter === "All" || p.mood === moodFilter);
 
     const pinnedFirst = (a: typeof mapped[0], b: typeof mapped[0]) => {
