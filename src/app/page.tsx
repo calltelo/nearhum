@@ -4059,7 +4059,7 @@ export default function Nearhum() {
   /* ---- ledger ------------------------------------------------------------ */
   useEffect(() => {
     if (!uid) return;
-    const q = query(collection(firestore, "users", uid, "ledger"), orderBy("at", "desc"), limit(50));
+    const q = query(collection(firestore, "users", uid, "ledger"), orderBy("at", "desc"), limit(20));
     const unsub = onSnapshot(q, (snap) => {
       setLedger(
         snap.docs.map((dd) => {
