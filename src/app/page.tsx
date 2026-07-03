@@ -3639,33 +3639,14 @@ function CreditChip({ plays, credits, onClick }: { plays: number; credits: numbe
 /* ----------------------------------------------------------------------------
    LOCATION SWITCHER
    Listen in from another area — but you can still only drop where you really
-   are. "Near me" returns you to your real location.
+   are. "Near me" returns you to your real location. The city list is derived
+   live from places that actually have drops in the database (see
+   `remotePlaces` in Nearhum()) — no hardcoded city roster.
    ---------------------------------------------------------------------------- */
-const PLACES: { state: string; cities: { name: string; lat: number; lng: number }[] }[] = [
-  { state: "Florida", cities: [
-    { name: "Orlando", lat: 28.5384, lng: -81.3789 },
-    { name: "Miami", lat: 25.7617, lng: -80.1918 },
-    { name: "Tampa", lat: 27.9506, lng: -82.4572 },
-    { name: "Jacksonville", lat: 30.3322, lng: -81.6557 },
-  ]},
-  { state: "New York", cities: [
-    { name: "New York City", lat: 40.7128, lng: -74.006 },
-    { name: "Brooklyn", lat: 40.6782, lng: -73.9442 },
-  ]},
-  { state: "California", cities: [
-    { name: "Los Angeles", lat: 34.0522, lng: -118.2437 },
-    { name: "San Francisco", lat: 37.7749, lng: -122.4194 },
-    { name: "San Diego", lat: 32.7157, lng: -117.1611 },
-  ]},
-  { state: "Illinois", cities: [{ name: "Chicago", lat: 41.8781, lng: -87.6298 }] },
-  { state: "Texas", cities: [
-    { name: "Austin", lat: 30.2672, lng: -97.7431 },
-    { name: "Houston", lat: 29.7604, lng: -95.3698 },
-  ]},
-  { state: "Washington", cities: [{ name: "Seattle", lat: 47.6062, lng: -122.3321 }] },
-];
+type RemotePlace = { name: string; lat: number; lng: number };
+type RemotePlaceGroup = { state: string; cities: RemotePlace[] };
 
-function LocationSheet({ onClose, onPick, onHome, realPlace, viewingRemote }: { onClose: () => void; onPick: (c: { name: string; lat: number; lng: number }) => void; onHome: () => void; realPlace: string; viewingRemote: boolean }) {
+function LocationSheet({ onClose, onPick, onHome, realPlace, viewingRemote, places }: { onClose: () => void; onPick: (c: { name: string; lat: number; lng: number }) => void; onHome: () => void; realPlace: string; viewingRemote: boolean; places: RemotePlaceGroup[] }) {
   return (
     <Sheet onClose={onClose}>
       <div style={{ fontSize: 19, fontWeight: 750, color: C.text, marginBottom: 6 }}>Listen from anywhere</div>
@@ -3681,7 +3662,10 @@ function LocationSheet({ onClose, onPick, onHome, realPlace, viewingRemote }: { 
       </button>
 
       <div style={{ overflowY: "auto" }}>
-        {PLACES.map((s) => (
+        {places.length === 0 && (
+          <p style={{ fontSize: 12, color: C.dimmer, textAlign: "center", padding: "10px 0" }}>No other areas have drops yet — be the first somewhere new.</p>
+        )}
+        {places.map((s) => (
           <div key={s.state} style={{ marginBottom: 14 }}>
             <SectionLabel>{s.state.toUpperCase()}</SectionLabel>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -3911,6 +3895,28 @@ export default function Nearhum() {
     };
     return mapped.sort(pinnedFirst) as unknown as Ping[];
   }, [rawDrops, activeLoc, moodFilter, sortMode, uid]);
+
+  // Cities you can "listen from anywhere" — pulled from places that actually
+  // have drops, not a fixed roster. Excludes your own city (that's "Near me").
+  const remotePlaces: RemotePlaceGroup[] = useMemo(() => {
+    const byPlace = new Map<string, RemotePlace & { state: string }>();
+    rawDrops.forEach((d) => {
+      const place = (d.place as string) || "";
+      const lat = d.lat as number | null;
+      const lng = d.lng as number | null;
+      if (!place || lat == null || lng == null || place === realPlace || byPlace.has(place)) return;
+      const [city, state] = place.split(",").map((s) => s.trim());
+      byPlace.set(place, { name: city || place, lat, lng, state: state || "OTHER" });
+    });
+    const byState = new Map<string, RemotePlace[]>();
+    byPlace.forEach(({ state, ...city }) => {
+      if (!byState.has(state)) byState.set(state, []);
+      byState.get(state)!.push(city);
+    });
+    return Array.from(byState.entries())
+      .map(([state, cities]) => ({ state, cities: cities.sort((a, b) => a.name.localeCompare(b.name)) }))
+      .sort((a, b) => a.state.localeCompare(b.state));
+  }, [rawDrops, realPlace]);
 
   const moodCounts = useMemo(() => {
     const c: Record<string, number> = { All: pings.length };
@@ -4723,6 +4729,7 @@ export default function Nearhum() {
           onClose={() => setLocationOpen(false)}
           realPlace={realPlace}
           viewingRemote={viewingRemote}
+          places={remotePlaces}
           onPick={(c) => {
             setRemoteLoc(c);
             setLocationOpen(false);
