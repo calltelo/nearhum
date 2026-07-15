@@ -60,7 +60,8 @@ import {
    users/{uid}                     handle, email, credits, plays, location{},
                                    city, state, streak, lastActiveDay, prefs{},
                                    pwaInstalled, pwaInstalledAt,
-                                   pushEnabled, pushGrantedAt, fcmTokens[]
+                                   pushEnabled, pushGrantedAt, fcmTokens[],
+                                   lastSeenAt (UTC heartbeat)
    users/{uid}/activity/{id}       type, who, react, title, detail, at, unread
    users/{uid}/ledger/{id}         label, delta, at
    drops/{id}                      uid, handle, title, mood, secs, audioUrl,
@@ -4242,6 +4243,39 @@ export default function Nearhum() {
       { enableHighAccuracy: false, maximumAge: 15000, timeout: 20000 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
+  }, [uid]);
+
+  /* ---- heartbeat: users/{uid}.lastSeenAt, always UTC ----------------------
+     Stamped on sign-in, every 60s while the app is visible, on tab focus,
+     and (best-effort) at the moment the tab goes hidden — so the field reads
+     as "when they were last actually here", not "when the tab was open".
+     --------------------------------------------------------------------- */
+  useEffect(() => {
+    if (!uid) return;
+    const stamp = () =>
+      updateDoc(doc(firestore, "users", uid), { lastSeenAt: new Date().toISOString() }).catch(() => {});
+    let lastBeat = 0;
+    const beat = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastBeat < 50000) return; // at most ~1 write/min
+      lastBeat = now;
+      stamp();
+    };
+    beat();
+    const iv = setInterval(beat, 60000);
+    const onVis = () => {
+      // departure stamp is unthrottled — it's the most truthful "last online"
+      if (document.visibilityState === "hidden") stamp();
+      else beat();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", beat);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", beat);
+    };
   }, [uid]);
 
   /* ---- PWA install --------------------------------------------------------
