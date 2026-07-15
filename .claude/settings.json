@@ -26,7 +26,10 @@
       "Bash(curl -s -X POST -w \"\\\\n[HTTP %{http_code}]\\\\n\" \"http://localhost:3000/api/push?task=nudge\")",
       "Bash(curl -s -X POST \"http://localhost:3000/api/push?task=nudge\")",
       "Bash(grep -n \"deleteField\\\\|^} from \\\\\"firebase/firestore\\\\\"\\\\|runTransaction,$\" \"c:\\\\Users\\\\NearHum\\\\Desktop\\\\nearhum\\\\src\\\\app\\\\page.tsx\")",
-      "Bash(grep -n \"rawDrops$\\\\|rawDrops\\\\.$\\\\|const mapped = rawDrops\" \"c:\\\\Users\\\\NearHum\\\\Desktop\\\\nearhum\\\\src\\\\app\\\\page.tsx\")"
+      "Bash(grep -n \"rawDrops$\\\\|rawDrops\\\\.$\\\\|const mapped = rawDrops\" \"c:\\\\Users\\\\NearHum\\\\Desktop\\\\nearhum\\\\src\\\\app\\\\page.tsx\")",
+      "Bash(curl -s -o /dev/null -w \"no key: HTTP %{http_code}\\\\n\" \"http://localhost:3000/api/admin\")",
+      "Bash(curl -s \"http://localhost:3000/api/admin?key=da800a3cfc975de7b78f98e5876d1ddb4c74a5b4771fa281\")",
+      "Bash(curl -s -o /dev/null -w \"admin page: HTTP %{http_code}\\\\n\" \"http://localhost:3000/admin\")"
     ]
   }
 }
