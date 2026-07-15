@@ -44,7 +44,8 @@ import {
    config          economy (plays/credits), moods, reactions, prompts, reach
    helpers         geo math (distance + bearing), formatting, color utilities
    icons           a crisp inline-SVG icon set (replaces unicode glyphs)
-   atoms           Mark, Wave, ProgWave, Eq, Pulse, Toast, Chip, Stat, Skeleton
+   atoms           Mark, Wave, ProgWave, Eq, Pulse, Toast, Chip, MiniStat,
+                   LedgerCard, Skeleton
    Radar           THE SIGNATURE — a live sweep of the voices around you
    Onboarding      first run: welcome → location → account → mic → enter
    Loader          splash with breathing rings
@@ -762,20 +763,107 @@ function Divider({ label }: { label?: string }) {
   );
 }
 
-function StatTile({ value, label, color = C.green }: { value: React.ReactNode; label: string; color?: string }) {
+function MiniStat({ icon, value, label, color }: { icon: string; value: React.ReactNode; label: string; color: string }) {
   return (
     <div
       style={{
         flex: 1,
         background: C.card,
         border: `1px solid ${C.line}`,
-        borderRadius: 16,
-        padding: "16px 8px",
+        borderRadius: 14,
+        padding: "12px 4px 10px",
         textAlign: "center",
       }}
     >
-      <div style={{ fontFamily: MONO, fontSize: 22, color, fontWeight: 700 }}>{value}</div>
-      <div style={{ fontFamily: MONO, fontSize: 9, color: C.dim, letterSpacing: 1.5, marginTop: 4 }}>{label}</div>
+      <I name={icon} size={14} color={color} />
+      <div style={{ fontFamily: MONO, fontSize: 18, color: C.text, fontWeight: 700, marginTop: 4 }}>{value}</div>
+      <div style={{ fontFamily: MONO, fontSize: 8, color: C.dim, letterSpacing: 1.2, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   LEDGER
+   The raw ledger is a wall of "Play −1" rows. Consecutive same-label entries
+   collapse into one line (Play ×12 · −12), each type gets its icon, and gains
+   read green while spends stay quiet.
+   ---------------------------------------------------------------------------- */
+function ledgerMeta(label: string): { icon: string; color: string } {
+  if (label === "Play") return { icon: "ear", color: C.cyan };
+  if (label === "Hum") return { icon: "mic", color: C.greenSoft };
+  if (label === "Drop") return { icon: "radio", color: C.green };
+  if (label === "Mic Drop") return { icon: "broadcast", color: C.amber };
+  if (label.startsWith("Bought") || label === "Welcome bonus") return { icon: "spark", color: C.green };
+  return { icon: "clock", color: C.dim };
+}
+
+function LedgerCard({ items }: { items: { id: string; label: string; delta: number; ago: string }[] }) {
+  const groups: { id: string; label: string; delta: number; ago: string; count: number }[] = [];
+  for (const l of items) {
+    const last = groups[groups.length - 1];
+    if (last && last.label === l.label && Math.sign(l.delta) === Math.sign(last.delta)) {
+      last.count += 1;
+      last.delta += l.delta;
+    } else {
+      groups.push({ ...l, count: 1 });
+    }
+  }
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 18, overflow: "hidden" }}>
+      {groups.map((g, i) => {
+        const m = ledgerMeta(g.label);
+        const gain = g.delta >= 0;
+        return (
+          <div
+            key={g.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "12px 14px",
+              borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}`,
+            }}
+          >
+            <span
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 10,
+                background: hexA(m.color, "14"),
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <I name={m.icon} size={15} color={m.color} />
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ fontSize: 13, color: C.textDim, fontWeight: 600 }}>
+                {g.label}
+                {g.count > 1 && (
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: C.dim, marginLeft: 6 }}>×{g.count}</span>
+                )}
+              </span>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 2 }}>{g.ago}</div>
+            </div>
+            <span
+              style={{
+                fontFamily: MONO,
+                fontSize: 12.5,
+                fontWeight: 700,
+                color: gain ? C.green : C.dim,
+                background: gain ? hexA(C.green, "14") : "transparent",
+                border: gain ? `1px solid ${hexA(C.green, "33")}` : "none",
+                borderRadius: 99,
+                padding: gain ? "3px 10px" : "3px 0",
+              }}
+            >
+              {gain ? "+" : ""}{g.delta}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -4874,9 +4962,22 @@ export default function Nearhum() {
         {/* ---------------- YOU ---------------- */}
         {tab === "you" && (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
-              <div style={{ width: 64, height: 64, borderRadius: 20, background: `linear-gradient(135deg, ${C.greenDeep}, ${C.green})`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: `0 8px 24px ${hexA(C.green, "33")}` }}>
-                <I name="user" size={30} color={C.bg} />
+            {/* identity */}
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 22 }}>
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 64, height: 64, borderRadius: 22, background: `linear-gradient(135deg, ${C.greenDeep}, ${C.green})`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 8px 24px ${hexA(C.green, "33")}` }}>
+                  {myHandle && myHandle !== "—" ? (
+                    <span style={{ fontFamily: MONO, fontSize: 28, fontWeight: 800, color: C.bg, textTransform: "uppercase" }}>{myHandle[0]}</span>
+                  ) : (
+                    <I name="user" size={30} color={C.bg} />
+                  )}
+                </div>
+                {streak > 0 && (
+                  <span style={{ position: "absolute", right: -6, bottom: -6, display: "flex", alignItems: "center", gap: 3, background: C.bg, border: `1px solid ${hexA(C.amber, "55")}`, borderRadius: 99, padding: "3px 7px" }}>
+                    <I name="flame" size={11} color={C.amber} fill={hexA(C.amber, "55")} />
+                    <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 800, color: C.amberSoft }}>{streak}</span>
+                  </span>
+                )}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 22, fontWeight: 780, color: C.text }}>{myHandle === "—" ? "Anonymous" : `@${myHandle}`}</div>
@@ -4889,25 +4990,44 @@ export default function Nearhum() {
               </button>
             </div>
 
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <StatTile value={fmtCount(dropCount)} label="DROPS" color={C.green} />
-              <StatTile value={fmtCount(humsGot)} label="HUMS GOT" color={C.greenSoft} />
-              <StatTile value={fmtCount(reactsGot)} label="REACTIONS" color={C.rose} />
-            </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
-              <StatTile value={fmtCount(plays)} label="PLAYS LEFT" color={C.cyan} />
-              <StatTile value={fmtCount(credits)} label="CREDITS" color={C.green} />
-              <StatTile value={streak} label="DAY STREAK" color={C.amber} />
+            {/* wallet — the two currencies, one card */}
+            <div style={{ background: `linear-gradient(160deg, ${hexA(C.green, "10")}, ${C.card} 55%)`, border: `1px solid ${C.lineHi}`, borderRadius: 20, overflow: "hidden", marginBottom: 12, boxShadow: SHADOW.md }}>
+              <div style={{ display: "flex" }}>
+                <div style={{ flex: 1, padding: "18px 16px 14px", textAlign: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <I name="ear" size={13} color={C.cyan} />
+                    <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: 2, color: C.dim }}>PLAYS</span>
+                  </div>
+                  <div style={{ fontFamily: MONO, fontSize: 30, fontWeight: 800, color: C.cyanSoft, marginTop: 6 }}>{fmtCount(plays)}</div>
+                  <div style={{ fontFamily: MONO, fontSize: 9, color: plays < 5 ? C.amberSoft : C.dimmer, marginTop: 4 }}>
+                    {plays < 5 ? "running low" : "1 = one listen"}
+                  </div>
+                </div>
+                <div style={{ width: 1, background: C.line, margin: "14px 0" }} />
+                <div style={{ flex: 1, padding: "18px 16px 14px", textAlign: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    <I name="spark" size={13} color={C.green} />
+                    <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: 2, color: C.dim }}>CREDITS</span>
+                  </div>
+                  <div style={{ fontFamily: MONO, fontSize: 30, fontWeight: 800, color: C.greenSoft, marginTop: 6 }}>{fmtCount(credits)}</div>
+                  <div style={{ fontFamily: MONO, fontSize: 9, color: credits < DROP_COST ? C.amberSoft : C.dimmer, marginTop: 4 }}>
+                    {credits < DROP_COST ? "not enough to drop" : "2 = drop · 1 = hum"}
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setTopUpOpen(true)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 0", border: "none", borderTop: `1px solid ${C.line}`, background: hexA(C.green, "10"), cursor: "pointer" }}>
+                <I name="plus" size={14} color={C.green} />
+                <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 800, letterSpacing: 1.5, color: C.green }}>TOP UP</span>
+              </button>
             </div>
 
-            <button onClick={() => setTopUpOpen(true)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "15px 16px", borderRadius: 16, border: `1px solid ${hexA(C.green, "44")}`, background: `linear-gradient(135deg, ${hexA(C.green, "16")}, ${C.card})`, cursor: "pointer", marginBottom: 10, textAlign: "left" }}>
-              <I name="spark" size={20} color={C.green} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Top up plays &amp; credits</div>
-                <div style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>keep listening and dropping</div>
-              </div>
-              <I name="chevR" size={18} color={C.dim} />
-            </button>
+            {/* voice stats */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
+              <MiniStat icon="radio" value={fmtCount(dropCount)} label="DROPS" color={C.green} />
+              <MiniStat icon="mic" value={fmtCount(humsGot)} label="HUMS GOT" color={C.greenSoft} />
+              <MiniStat icon="heart" value={fmtCount(reactsGot)} label="REACTIONS" color={C.rose} />
+              <MiniStat icon="flame" value={streak} label="STREAK" color={C.amber} />
+            </div>
 
             {canInstall && (
               <button onClick={installApp} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "15px 16px", borderRadius: 16, border: `1px solid ${C.line}`, background: C.card, cursor: "pointer", marginBottom: 22, textAlign: "left" }}>
@@ -4924,13 +5044,7 @@ export default function Nearhum() {
             {ledger.length === 0 ? (
               <div style={{ fontFamily: MONO, fontSize: 12, color: C.dim, padding: "10px 0", textAlign: "center" }}>nothing yet — your plays and drops will show here</div>
             ) : (
-              ledger.map((l) => (
-                <div key={l.id} style={{ display: "flex", alignItems: "center", padding: "12px 4px", borderBottom: `1px solid ${C.lineSoft}` }}>
-                  <span style={{ fontSize: 13, color: C.textDim, flex: 1 }}>{l.label}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 11, color: C.dimmer, marginRight: 12 }}>{l.ago}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: l.delta >= 0 ? C.green : C.dim }}>{l.delta >= 0 ? "+" : ""}{l.delta}</span>
-                </div>
-              ))
+              <LedgerCard items={ledger} />
             )}
           </>
         )}
