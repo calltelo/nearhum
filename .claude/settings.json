@@ -4,7 +4,18 @@
       "Bash(npx tsc *)",
       "Bash(npx eslint *)",
       "Bash(awk -F: '{print $1}')",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000)",
+      "Bash(grep -n \"RADAR \\\\*/}\\\\|{/\\\\* greeting + place \\\\*/}\" \"c:\\\\Users\\\\NearHum\\\\Desktop\\\\nearhum\\\\src\\\\app\\\\page.tsx\")",
+      "Read(//tmp/**)",
+      "Bash(grep -n -A5 \"page.tsx:4073:5\" /tmp/lintout.txt | head -10)",
+      "Bash(git stash *)",
+      "Bash(grep -oE \"[a-z-]+/[a-z-]+$|no-[a-z-]+$\" /tmp/before.txt | sort | uniq -c > /tmp/before_rules.txt *)",
+      "Bash(npx --no-install playwright --version)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000/sw.js)",
+      "Bash(curl -s -o /dev/null -w \"manifest HTTP %{http_code}\\\\n\" http://localhost:3000/manifest.json)"
     ]
   }
 }

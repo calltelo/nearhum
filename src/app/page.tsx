@@ -57,7 +57,8 @@ import {
    FIRESTORE SHAPE (unchanged — do not break)
    ----------------------------------------------------------------------------
    users/{uid}                     handle, email, credits, plays, location{},
-                                   city, state, streak, lastActiveDay, prefs{}
+                                   city, state, streak, lastActiveDay, prefs{},
+                                   pwaInstalled, pwaInstalledAt
    users/{uid}/activity/{id}       type, who, react, title, detail, at, unread
    users/{uid}/ledger/{id}         label, delta, at
    drops/{id}                      uid, handle, title, mood, secs, audioUrl,
@@ -396,6 +397,19 @@ function lerp(a: number, b: number, t: number) {
 function isLateNight() {
   const h = new Date().getHours();
   return h >= 22 || h < 5;
+}
+// iOS Safari never fires beforeinstallprompt/appinstalled, so the install
+// banner has to fall back to "tap Share, then Add to Home Screen" copy there.
+function isIOSDevice() {
+  if (typeof navigator === "undefined") return false;
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) && !(window as unknown as { MSStream?: unknown }).MSStream;
+}
+function isStandaloneDisplay() {
+  if (typeof window === "undefined") return false;
+  return (
+    window.matchMedia?.("(display-mode: standalone)")?.matches === true ||
+    (window.navigator as unknown as { standalone?: boolean }).standalone === true
+  );
 }
 // Slugifies a "City, ST" place string into a stable Firestore doc id — the
 // key both the broadcast lock and every listener subscription are keyed on.
@@ -1848,6 +1862,74 @@ function VoiceCard({
         )}
       </div>
     </button>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+   INSTALL BANNER
+   Nudges the PWA install. "prompt" fires the native beforeinstallprompt flow
+   (Chrome/Edge/Android); "ios" shows manual Add-to-Home-Screen steps since
+   iOS Safari never fires that event. Actual install is recorded to Firestore
+   from appinstalled / a standalone-display-mode check, not from a tap here —
+   this button only requests the prompt.
+   ---------------------------------------------------------------------------- */
+function InstallBanner({
+  variant,
+  onInstall,
+  onDismiss,
+}: {
+  variant: "prompt" | "ios";
+  onInstall: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: 14,
+        marginBottom: 16,
+        borderRadius: 18,
+        border: `1px solid ${hexA(C.green, "33")}`,
+        background: `linear-gradient(135deg, ${hexA(C.green, "12")}, ${C.card})`,
+      }}
+    >
+      <Mark size={34} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: C.text }}>Install Nearhum</div>
+        <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.dim, marginTop: 2 }}>
+          {variant === "ios" ? 'tap share, then "add to home screen"' : "opens instantly, feels like an app"}
+        </div>
+      </div>
+      {variant === "prompt" && (
+        <button
+          onClick={onInstall}
+          style={{
+            flexShrink: 0,
+            padding: "9px 14px",
+            borderRadius: 12,
+            border: "none",
+            background: C.green,
+            color: C.greenInk,
+            fontFamily: MONO,
+            fontSize: 11,
+            fontWeight: 800,
+            letterSpacing: 0.5,
+            cursor: "pointer",
+          }}
+        >
+          INSTALL
+        </button>
+      )}
+      <button
+        onClick={onDismiss}
+        aria-label="Dismiss install banner"
+        style={{ flexShrink: 0, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", cursor: "pointer" }}
+      >
+        <I name="x" size={15} color={C.dim} />
+      </button>
+    </div>
   );
 }
 
@@ -3836,6 +3918,16 @@ export default function Nearhum() {
   const streakDoneRef = useRef(false);
   const pwaPromptRef = useRef<{ prompt: () => void } | null>(null);
   const [canInstall, setCanInstall] = useState(false);
+  const [pwaInstalled, setPwaInstalled] = useState(false);
+  const [isIOS] = useState(isIOSDevice);
+  const [installDismissed, setInstallDismissed] = useState(() => {
+    try {
+      const dismissedAt = localStorage.getItem("nh_install_dismissed_at");
+      return !!(dismissedAt && Date.now() - Number(dismissedAt) < 7 * 86400000);
+    } catch {
+      return false;
+    }
+  });
 
   const activeLoc = remoteLoc ?? realLocation;
   const viewingRemote = !!remoteLoc;
@@ -3963,6 +4055,7 @@ export default function Nearhum() {
       if (city || state) setRealPlace([city, state].filter(Boolean).join(", "));
       setPrefs({ ...DEFAULT_PREFS, ...((d.prefs as Partial<Prefs>) || {}) });
       setStreak((d.streak as number) ?? 0);
+      setPwaInstalled(!!d.pwaInstalled);
       if (!d.seenCoach && !streakDoneRef.current) setShowCoach(true);
 
       // streak — run once per session
@@ -4111,16 +4204,59 @@ export default function Nearhum() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [uid]);
 
-  /* ---- PWA install ------------------------------------------------------- */
+  /* ---- PWA install --------------------------------------------------------
+     Three ways we learn a user installed:
+       1. `appinstalled` fires right after a successful native prompt.
+       2. On load, if the app is already running standalone (installed via
+          the browser's own menu, or — on iOS — "Add to Home Screen", which
+          never fires beforeinstallprompt/appinstalled at all) we reconcile
+          Firestore to match reality.
+       3. The dismiss cooldown is local-only (localStorage); install status
+          itself always lives in Firestore so it's true across devices.
+     Chrome/Edge won't fire beforeinstallprompt at all without an active
+     service worker, so it has to be registered before canInstall can ever
+     become true.
+     --------------------------------------------------------------------- */
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     const onPrompt = (e: Event) => {
       e.preventDefault();
       pwaPromptRef.current = e as unknown as { prompt: () => void };
       setCanInstall(true);
     };
+    const onInstalled = () => {
+      setCanInstall(false);
+      pwaPromptRef.current = null;
+      if (uid) {
+        updateDoc(doc(firestore, "users", uid), {
+          pwaInstalled: true,
+          pwaInstalledAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
+      flash("Nearhum installed", "check", C.green);
+    };
     window.addEventListener("beforeinstallprompt", onPrompt);
-    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
-  }, []);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, [uid, flash]);
+
+  useEffect(() => {
+    if (!uid || pwaInstalled) return;
+    if (isStandaloneDisplay()) {
+      updateDoc(doc(firestore, "users", uid), {
+        pwaInstalled: true,
+        pwaInstalledAt: new Date().toISOString(),
+      }).catch(() => {});
+    }
+  }, [uid, pwaInstalled]);
 
   /* ---- audio element ----------------------------------------------------- */
   useEffect(() => {
@@ -4384,6 +4520,15 @@ export default function Nearhum() {
     pwaPromptRef.current?.prompt();
     setCanInstall(false);
   };
+  const dismissInstallBanner = () => {
+    setInstallDismissed(true);
+    try {
+      localStorage.setItem("nh_install_dismissed_at", String(Date.now()));
+    } catch {
+      /* no storage */
+    }
+  };
+  const showInstallBanner = !pwaInstalled && !installDismissed && (canInstall || isIOS);
 
   const openReply = (p: Ping) => setReplyTarget(p);
 
@@ -4480,6 +4625,14 @@ export default function Nearhum() {
                 </div>
               )}
             </div>
+
+            {showInstallBanner && (
+              <InstallBanner
+                variant={canInstall ? "prompt" : "ios"}
+                onInstall={installApp}
+                onDismiss={dismissInstallBanner}
+              />
+            )}
 
             {/* RADAR */}
             {pings.length > 0 && (
