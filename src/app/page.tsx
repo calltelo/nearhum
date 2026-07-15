@@ -4044,6 +4044,7 @@ export default function Nearhum() {
   const [recentJoins, setRecentJoins] = useState<{ id: string; handle: string; createdAt: string }[]>([]);
   const [ledger, setLedger] = useState<{ id: string; label: string; delta: number; ago: string }[]>([]);
   const [listens, setListens] = useState<{ id: string; dropId: string; title: string; who: string; mood: string; cost: number; ago: string }[]>([]);
+  const [listenPage, setListenPage] = useState(0);
   const [feedLoading, setFeedLoading] = useState(true);
 
   // ui
@@ -4423,7 +4424,7 @@ export default function Nearhum() {
   /* ---- listens (listening history) ---------------------------------------- */
   useEffect(() => {
     if (!uid) return;
-    const q = query(collection(firestore, "users", uid, "listens"), orderBy("at", "desc"), limit(15));
+    const q = query(collection(firestore, "users", uid, "listens"), orderBy("at", "desc"), limit(70));
     const unsub = onSnapshot(q, (snap) => {
       setListens(
         snap.docs.map((dd) => {
@@ -5257,25 +5258,66 @@ export default function Nearhum() {
             <SectionLabel icon="ear">RECENTLY HEARD</SectionLabel>
             {listens.length === 0 ? (
               <div style={{ fontFamily: MONO, fontSize: 12, color: C.dim, padding: "10px 0", textAlign: "center" }}>voices you listen to will show here</div>
-            ) : (
-              <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 18, overflow: "hidden" }}>
-                {listens.map((l, i) => {
-                  const mc = MOOD[l.mood] || C.green;
-                  return (
-                    <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}` }}>
-                      <span style={{ width: 32, height: 32, borderRadius: 10, background: hexA(mc, "14"), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <I name="ear" size={15} color={mc} />
-                      </span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, color: C.textDim, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.title}</div>
-                        <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 2 }}>{l.who ? `@${l.who}` : "—"} · {l.ago}</div>
-                      </div>
-                      <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: C.cyanSoft, background: hexA(C.cyan, "12"), border: `1px solid ${hexA(C.cyan, "2E")}`, borderRadius: 99, padding: "3px 10px", minWidth: 34, textAlign: "center", flexShrink: 0 }}>-{l.cost}</span>
+            ) : (() => {
+              const PER_PAGE = 7;
+              const totalPages = Math.ceil(listens.length / PER_PAGE);
+              const page = Math.min(listenPage, totalPages - 1);
+              const pageItems = listens.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
+              return (
+                <>
+                  <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 18, overflow: "hidden" }}>
+                    {pageItems.map((l, i) => {
+                      const mc = MOOD[l.mood] || C.green;
+                      return (
+                        <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}` }}>
+                          <span style={{ width: 32, height: 32, borderRadius: 10, background: hexA(mc, "14"), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <I name="ear" size={15} color={mc} />
+                          </span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, color: C.textDim, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.title}</div>
+                            <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 2 }}>{l.who ? `@${l.who}` : "—"} · {l.ago}</div>
+                          </div>
+                          <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: C.cyanSoft, background: hexA(C.cyan, "12"), border: `1px solid ${hexA(C.cyan, "2E")}`, borderRadius: 99, padding: "3px 10px", minWidth: 34, textAlign: "center", flexShrink: 0 }}>-{l.cost}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {totalPages > 1 && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
+                      <button
+                        onClick={() => { vibrate(6); setListenPage(Math.max(0, page - 1)); }}
+                        disabled={page === 0}
+                        style={{ width: 30, height: 30, borderRadius: 10, border: `1px solid ${C.line}`, background: C.card, cursor: page === 0 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: page === 0 ? 0.35 : 1 }}
+                      >
+                        <I name="chevL" size={14} color={C.dim} />
+                      </button>
+                      {Array.from({ length: totalPages }).map((_, i) => (
+                        <button
+                          key={i}
+                          onClick={() => { vibrate(6); setListenPage(i); }}
+                          style={{
+                            minWidth: 30, height: 30, borderRadius: 10, padding: "0 4px", cursor: "pointer",
+                            fontFamily: MONO, fontSize: 12, fontWeight: 700,
+                            border: `1px solid ${i === page ? C.green : C.line}`,
+                            background: i === page ? hexA(C.green, "1A") : C.card,
+                            color: i === page ? C.green : C.dim,
+                          }}
+                        >
+                          {i + 1}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => { vibrate(6); setListenPage(Math.min(totalPages - 1, page + 1)); }}
+                        disabled={page === totalPages - 1}
+                        style={{ width: 30, height: 30, borderRadius: 10, border: `1px solid ${C.line}`, background: C.card, cursor: page === totalPages - 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: page === totalPages - 1 ? 0.35 : 1 }}
+                      >
+                        <I name="chevR" size={14} color={C.dim} />
+                      </button>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  )}
+                </>
+              );
+            })()}
           </>
         )}
       </div>
