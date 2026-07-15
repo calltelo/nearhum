@@ -1970,8 +1970,13 @@ function VoiceCard({
 
       {/* stats */}
       <div style={{ display: "flex", alignItems: "center", gap: 14, fontFamily: MONO, fontSize: 11, color: C.dim }}>
+        {liveEars(p) > 0 && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: C.greenSoft }}>
+            <Pulse color={C.green} size={6} /> {liveEars(p)} listening
+          </span>
+        )}
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <I name="play" size={11} color={C.dim} /> {fmtCount(p.plays)}
+          <I name="ear" size={11} color={C.dim} /> {fmtCount(p.plays)}
         </span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
           <I name="mic" size={11} color={C.dim} sw={1.6} /> {p.replies.length}
@@ -2109,8 +2114,15 @@ function LoudestHero({ p, onOpen }: { p: Ping | null; onOpen: (id: string) => vo
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <I name="spark" size={13} color={mc} />
         <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: 2, color: mc }}>LOUDEST NEAR YOU</span>
-        <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: C.dim, display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <I name="play" size={10} color={C.dim} /> {fmtCount(p.plays)}
+        <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10, color: C.dim, display: "inline-flex", alignItems: "center", gap: 5 }}>
+          {liveEars(p) > 0 && (
+            <>
+              <Pulse color={C.green} size={6} />
+              <span style={{ color: C.greenSoft }}>{liveEars(p)}</span>
+              <span style={{ color: C.dimmer }}>·</span>
+            </>
+          )}
+          <I name="ear" size={10} color={C.dim} /> {fmtCount(p.plays)}
         </span>
       </div>
       <div style={{ fontSize: 22, fontWeight: 750, color: C.text, lineHeight: 1.2, marginBottom: 12 }}>{p.title}</div>
