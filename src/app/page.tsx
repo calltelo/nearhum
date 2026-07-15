@@ -4539,7 +4539,25 @@ export default function Nearhum() {
   }, [tab, unread]);
 
   /* ---- economy ----------------------------------------------------------- */
-  const chargePlayFor = useCallback(
+  /* A voice can START if it's already paid for (replays are free) or the
+     wallet can cover it. No charge happens here — the charge lands only on a
+     real listen (chargePlay below), so skipping early costs nothing. */
+  const canPlay = useCallback(
+    (p: Ping): boolean => {
+      if (playCountedRef.current.has(p.id)) return true;
+      if (plays < PLAY_COST) {
+        flash("Out of plays — top up to keep listening", "ear", C.cyan);
+        setTopUpOpen(true);
+        return false;
+      }
+      return true;
+    },
+    [plays, flash]
+  );
+
+  /* The actual charge — a "real listen": 60% of a voice heard (markPlayed)
+     or a deliberate reply play. Idempotent per drop via playCountedRef. */
+  const chargePlay = useCallback(
     (p: Ping): boolean => {
       if (playCountedRef.current.has(p.id)) return true;
       if (plays < PLAY_COST) {
@@ -4568,6 +4586,7 @@ export default function Nearhum() {
     (p: Ping) => {
       if (markedRef.current.has(p.id)) return;
       markedRef.current.add(p.id);
+      chargePlay(p); // the listen is real now — this is where the play is spent
       updateDoc(doc(firestore, "drops", p.id), { plays: increment(1) }).catch(() => {});
       if (p.pinnedToUid === uid) {
         updateDoc(doc(firestore, "drops", p.id), { pinnedTo: null, pinnedToUid: null }).catch(() => {});
@@ -4577,7 +4596,7 @@ export default function Nearhum() {
         }
       }
     },
-    [uid, myHandle]
+    [uid, myHandle, chargePlay]
   );
 
   const advance = useCallback(() => {
@@ -4588,14 +4607,14 @@ export default function Nearhum() {
     const i = pings.findIndex((p) => p.id === currentId);
     const next = pings[i + 1];
     if (next) {
-      if (chargePlayFor(next)) {
+      if (canPlay(next)) {
         setCurrentId(next.id);
         setPlaying(true);
       } else setPlaying(false);
     } else {
       setPlaying(false);
     }
-  }, [pings, currentId, prefs.autoplay, chargePlayFor]);
+  }, [pings, currentId, prefs.autoplay, canPlay]);
 
   /* ---- auto-play when a drop enters your range --------------------------- */
   useEffect(() => {
@@ -4605,12 +4624,12 @@ export default function Nearhum() {
     knownPingIdsRef.current = currentIds;
     if (newEntrants.length === 0) return;
     const next = newEntrants[0];
-    if (chargePlayFor(next)) {
+    if (canPlay(next)) {
       setCurrentId(next.id);
       setPlaying(true);
       flash(`${next.handle} just entered your range`, "location", C.green);
     }
-  }, [pings, playing, prefs.autoplay, chargePlayFor, flash]);
+  }, [pings, playing, prefs.autoplay, canPlay, flash]);
 
   /* ---- transport --------------------------------------------------------- */
   const selectVoice = (id: string, expand = true) => {
@@ -4618,7 +4637,7 @@ export default function Nearhum() {
     if (!p) return;
     setCurrentId(id);
     if (expand) setExpanded(true);
-    if (chargePlayFor(p)) setPlaying(true);
+    if (canPlay(p)) setPlaying(true);
     else setPlaying(false);
   };
   const togglePlay = () => {
@@ -4628,19 +4647,19 @@ export default function Nearhum() {
     }
     if (playing) setPlaying(false);
     else {
-      if (chargePlayFor(current)) setPlaying(true);
+      if (canPlay(current)) setPlaying(true);
     }
   };
   const skip = () => {
     const next = pings[currentIdx + 1];
-    if (next && chargePlayFor(next)) {
+    if (next && canPlay(next)) {
       setCurrentId(next.id);
       setPlaying(true);
     }
   };
   const prev = () => {
     const p = pings[currentIdx - 1];
-    if (p && chargePlayFor(p)) {
+    if (p && canPlay(p)) {
       setCurrentId(p.id);
       setPlaying(true);
     }
@@ -5146,7 +5165,7 @@ export default function Nearhum() {
           uid={uid}
           myHandle={myHandle}
           credits={credits}
-          onPlayReply={() => chargePlayFor(replyTarget)}
+          onPlayReply={() => chargePlay(replyTarget)}
         />
       )}
 
