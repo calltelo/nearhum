@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { auth, firestore } from "@/app/firebase/config";
+import { auth, firestore, firebase_app } from "@/app/firebase/config";
+import { getMessaging, getToken, onMessage, isSupported as isPushSupported } from "firebase/messaging";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -58,7 +59,8 @@ import {
    ----------------------------------------------------------------------------
    users/{uid}                     handle, email, credits, plays, location{},
                                    city, state, streak, lastActiveDay, prefs{},
-                                   pwaInstalled, pwaInstalledAt
+                                   pwaInstalled, pwaInstalledAt,
+                                   pushEnabled, pushGrantedAt, fcmTokens[]
    users/{uid}/activity/{id}       type, who, react, title, detail, at, unread
    users/{uid}/ledger/{id}         label, delta, at
    drops/{id}                      uid, handle, title, mood, secs, audioUrl,
@@ -192,6 +194,10 @@ const WELCOME_PLAYS = 7;
 const MIC_DROP_COST = 10;
 const MIC_DROP_MAX_SECS = 60;
 const MIC_DROP_CHUNK_MS = 3000;
+
+// Web push — the public VAPID key from Firebase Cloud Messaging (public by
+// design; the private half lives in the Firebase console).
+const FCM_VAPID_KEY = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || "";
 
 /* ----------------------------------------------------------------------------
    REACTIONS
@@ -1867,19 +1873,19 @@ function VoiceCard({
 
 /* ----------------------------------------------------------------------------
    INSTALL BANNER
-   Nudges the PWA install. "prompt" fires the native beforeinstallprompt flow
+   One slot, three stages. "prompt" fires the native beforeinstallprompt flow
    (Chrome/Edge/Android); "ios" shows manual Add-to-Home-Screen steps since
-   iOS Safari never fires that event. Actual install is recorded to Firestore
-   from appinstalled / a standalone-display-mode check, not from a tap here —
-   this button only requests the prompt.
+   iOS Safari never fires that event; "push" appears after install and asks
+   to turn on notifications. Actual install is recorded to Firestore from
+   appinstalled / a standalone-display-mode check, not from a tap here.
    ---------------------------------------------------------------------------- */
 function InstallBanner({
   variant,
-  onInstall,
+  onAction,
   onDismiss,
 }: {
-  variant: "prompt" | "ios";
-  onInstall: () => void;
+  variant: "prompt" | "ios" | "push";
+  onAction: () => void;
   onDismiss: () => void;
 }) {
   return (
@@ -1895,16 +1901,28 @@ function InstallBanner({
         background: `linear-gradient(135deg, ${hexA(C.green, "12")}, ${C.card})`,
       }}
     >
-      <Mark size={34} />
+      {variant === "push" ? (
+        <span style={{ width: 34, height: 34, borderRadius: 12, background: hexA(C.green, "16"), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <I name="bell" size={19} color={C.greenSoft} />
+        </span>
+      ) : (
+        <Mark size={34} />
+      )}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700, color: C.text }}>Install Nearhum</div>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: C.text }}>
+          {variant === "push" ? "Turn on notifications" : "Install Nearhum"}
+        </div>
         <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.dim, marginTop: 2 }}>
-          {variant === "ios" ? 'tap share, then "add to home screen"' : "opens instantly, feels like an app"}
+          {variant === "push"
+            ? "hear when someone hums back"
+            : variant === "ios"
+            ? 'tap share, then "add to home screen"'
+            : "opens instantly, feels like an app"}
         </div>
       </div>
-      {variant === "prompt" && (
+      {variant !== "ios" && (
         <button
-          onClick={onInstall}
+          onClick={onAction}
           style={{
             flexShrink: 0,
             padding: "9px 14px",
@@ -1919,7 +1937,7 @@ function InstallBanner({
             cursor: "pointer",
           }}
         >
-          INSTALL
+          {variant === "push" ? "ALLOW" : "INSTALL"}
         </button>
       )}
       <button
@@ -3928,6 +3946,16 @@ export default function Nearhum() {
       return false;
     }
   });
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushDismissed, setPushDismissed] = useState(() => {
+    try {
+      const dismissedAt = localStorage.getItem("nh_push_dismissed_at");
+      return !!(dismissedAt && Date.now() - Number(dismissedAt) < 7 * 86400000);
+    } catch {
+      return false;
+    }
+  });
 
   const activeLoc = remoteLoc ?? realLocation;
   const viewingRemote = !!remoteLoc;
@@ -4056,6 +4084,7 @@ export default function Nearhum() {
       setPrefs({ ...DEFAULT_PREFS, ...((d.prefs as Partial<Prefs>) || {}) });
       setStreak((d.streak as number) ?? 0);
       setPwaInstalled(!!d.pwaInstalled);
+      setPushEnabled(!!d.pushEnabled);
       if (!d.seenCoach && !streakDoneRef.current) setShowCoach(true);
 
       // streak — run once per session
@@ -4222,6 +4251,27 @@ export default function Nearhum() {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
   }, []);
+
+  /* ---- push notifications -------------------------------------------------
+     isSupported() gates everything: FCM web push needs Notification, Push
+     API, and service workers (iOS only has these inside an installed PWA,
+     which matches when the banner asks). Foreground messages surface as a
+     toast; background ones are shown by sw.js.
+     --------------------------------------------------------------------- */
+  useEffect(() => {
+    let unsubMsg = () => {};
+    isPushSupported()
+      .then((ok) => {
+        if (!ok) return;
+        setPushSupported(true);
+        unsubMsg = onMessage(getMessaging(firebase_app), (payload) => {
+          const title = payload.notification?.title || payload.data?.title;
+          if (title) flash(title, "bell", C.green);
+        });
+      })
+      .catch(() => {});
+    return () => unsubMsg();
+  }, [flash]);
 
   useEffect(() => {
     const onPrompt = (e: Event) => {
@@ -4528,7 +4578,58 @@ export default function Nearhum() {
       /* no storage */
     }
   };
-  const showInstallBanner = !pwaInstalled && !installDismissed && (canInstall || isIOS);
+  const dismissPushBanner = () => {
+    setPushDismissed(true);
+    try {
+      localStorage.setItem("nh_push_dismissed_at", String(Date.now()));
+    } catch {
+      /* no storage */
+    }
+  };
+  const enablePush = async () => {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        dismissPushBanner();
+        if (perm === "denied") flash("notifications blocked — enable in browser settings", "mute", C.dim);
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const token = await getToken(getMessaging(firebase_app), {
+        vapidKey: FCM_VAPID_KEY,
+        serviceWorkerRegistration: reg,
+      });
+      if (!token) throw new Error("no token");
+      if (uid) {
+        await updateDoc(doc(firestore, "users", uid), {
+          pushEnabled: true,
+          pushGrantedAt: new Date().toISOString(),
+          // arrayUnion: one user can enable push on several devices
+          fcmTokens: arrayUnion(token),
+        });
+      }
+      vibrate(10);
+      flash("notifications on", "bell", C.green);
+    } catch {
+      flash("couldn't enable notifications", "x", C.rose);
+    }
+  };
+  // One banner slot, staged: install first; once installed, ask for push.
+  const bannerMode: "prompt" | "ios" | "push" | null = !pwaInstalled
+    ? installDismissed
+      ? null
+      : canInstall
+      ? "prompt"
+      : isIOS
+      ? "ios"
+      : null
+    : pushSupported &&
+      !pushEnabled &&
+      !pushDismissed &&
+      typeof Notification !== "undefined" &&
+      Notification.permission !== "denied"
+    ? "push"
+    : null;
 
   const openReply = (p: Ping) => setReplyTarget(p);
 
@@ -4626,11 +4727,11 @@ export default function Nearhum() {
               )}
             </div>
 
-            {showInstallBanner && (
+            {bannerMode && (
               <InstallBanner
-                variant={canInstall ? "prompt" : "ios"}
-                onInstall={installApp}
-                onDismiss={dismissInstallBanner}
+                variant={bannerMode}
+                onAction={bannerMode === "push" ? enablePush : installApp}
+                onDismiss={bannerMode === "push" ? dismissPushBanner : dismissInstallBanner}
               />
             )}
 
