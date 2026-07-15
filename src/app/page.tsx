@@ -64,7 +64,8 @@ import {
                                    pushEnabled, pushGrantedAt, fcmTokens[],
                                    lastSeenAt (UTC heartbeat)
    users/{uid}/activity/{id}       type, who, react, title, detail, at, unread
-   users/{uid}/ledger/{id}         label, delta, at
+   users/{uid}/ledger/{id}         label, delta, at (transactions only)
+   users/{uid}/listens/{id}        dropId, title, who, mood, cost, at (UTC)
    drops/{id}                      uid, handle, title, mood, secs, audioUrl,
                                    place, lat, lng, plays, ttl, radiusMi,
                                    pinnedTo, pinnedToUid, reacts{}, replies[],
@@ -3983,6 +3984,7 @@ export default function Nearhum() {
   const [rawDrops, setRawDrops] = useState<Record<string, unknown>[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [ledger, setLedger] = useState<{ id: string; label: string; delta: number; ago: string }[]>([]);
+  const [listens, setListens] = useState<{ id: string; dropId: string; title: string; who: string; mood: string; ago: string }[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
 
   // ui
@@ -4284,9 +4286,34 @@ export default function Nearhum() {
     const q = query(collection(firestore, "users", uid, "ledger"), orderBy("at", "desc"), limit(20));
     const unsub = onSnapshot(q, (snap) => {
       setLedger(
+        snap.docs
+          .map((dd) => {
+            const l = dd.data();
+            return { id: dd.id, label: (l.label as string) || "—", delta: (l.delta as number) || 0, ago: l.at ? timeAgo(l.at as string) : "" };
+          })
+          // legacy rows from before listens moved to their own subcollection
+          .filter((l) => l.label !== "Play")
+      );
+    });
+    return () => unsub();
+  }, [uid]);
+
+  /* ---- listens (listening history) ---------------------------------------- */
+  useEffect(() => {
+    if (!uid) return;
+    const q = query(collection(firestore, "users", uid, "listens"), orderBy("at", "desc"), limit(15));
+    const unsub = onSnapshot(q, (snap) => {
+      setListens(
         snap.docs.map((dd) => {
           const l = dd.data();
-          return { id: dd.id, label: (l.label as string) || "—", delta: (l.delta as number) || 0, ago: l.at ? timeAgo(l.at as string) : "" };
+          return {
+            id: dd.id,
+            dropId: (l.dropId as string) || "",
+            title: (l.title as string) || "—",
+            who: (l.who as string) || "",
+            mood: (l.mood as string) || "",
+            ago: l.at ? timeAgo(l.at as string) : "",
+          };
         })
       );
     });
@@ -4521,7 +4548,16 @@ export default function Nearhum() {
         return false;
       }
       updateDoc(doc(firestore, "users", uid), { plays: increment(-PLAY_COST) }).catch(() => {});
-      addDoc(collection(firestore, "users", uid, "ledger"), { label: "Play", delta: -PLAY_COST, at: new Date().toISOString() }).catch(() => {});
+      // listens get their own subcollection — a real listening history —
+      // instead of drowning the money ledger in "Play −1" rows
+      addDoc(collection(firestore, "users", uid, "listens"), {
+        dropId: p.id,
+        title: p.title,
+        who: p.handle,
+        mood: p.mood,
+        cost: PLAY_COST,
+        at: new Date().toISOString(),
+      }).catch(() => {});
       playCountedRef.current.add(p.id);
       return true;
     },
@@ -5042,9 +5078,32 @@ export default function Nearhum() {
 
             <SectionLabel icon="clock">RECENT</SectionLabel>
             {ledger.length === 0 ? (
-              <div style={{ fontFamily: MONO, fontSize: 12, color: C.dim, padding: "10px 0", textAlign: "center" }}>nothing yet — your plays and drops will show here</div>
+              <div style={{ fontFamily: MONO, fontSize: 12, color: C.dim, padding: "10px 0", textAlign: "center" }}>nothing yet — drops, hums and top-ups will show here</div>
             ) : (
               <LedgerCard items={ledger} />
+            )}
+
+            <div style={{ height: 22 }} />
+            <SectionLabel icon="ear">RECENTLY HEARD</SectionLabel>
+            {listens.length === 0 ? (
+              <div style={{ fontFamily: MONO, fontSize: 12, color: C.dim, padding: "10px 0", textAlign: "center" }}>voices you listen to will show here</div>
+            ) : (
+              <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 18, overflow: "hidden" }}>
+                {listens.map((l, i) => {
+                  const mc = MOOD[l.mood] || C.green;
+                  return (
+                    <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}` }}>
+                      <span style={{ width: 32, height: 32, borderRadius: 10, background: hexA(mc, "14"), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <I name="ear" size={15} color={mc} />
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, color: C.textDim, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.title}</div>
+                        <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 2 }}>{l.who ? `@${l.who}` : "—"} · {l.ago}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </>
         )}
