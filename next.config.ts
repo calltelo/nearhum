@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // firebase-admin uses Node internals that don't survive bundling
+  serverExternalPackages: ["firebase-admin"],
 };
 
 export default nextConfig;

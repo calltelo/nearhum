@@ -15,7 +15,16 @@
       "Bash(grep -oE \"[a-z-]+/[a-z-]+$|no-[a-z-]+$\" /tmp/before.txt | sort | uniq -c > /tmp/before_rules.txt *)",
       "Bash(npx --no-install playwright --version)",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:3000/sw.js)",
-      "Bash(curl -s -o /dev/null -w \"manifest HTTP %{http_code}\\\\n\" http://localhost:3000/manifest.json)"
+      "Bash(curl -s -o /dev/null -w \"manifest HTTP %{http_code}\\\\n\" http://localhost:3000/manifest.json)",
+      "Bash(npm install *)",
+      "Bash(curl -s -w \"\\\\n[HTTP %{http_code}]\\\\n\" \"http://localhost:3000/api/push\")",
+      "Bash(curl -s -w \"\\\\n[HTTP %{http_code}]\\\\n\" \"http://localhost:3000/api/push?task=test&key=da800a3cfc975de7b78f98e5876d1ddb4c74a5b4771fa281\")",
+      "Bash(curl -s -w \"\\\\n[HTTP %{http_code}]\\\\n\" \"http://localhost:3000/api/push?task=test&uid=dZg3Hn0AEgQ7NkaLJw5U70J3c7m1&key=da800a3cfc975de7b78f98e5876d1ddb4c74a5b4771fa281\")",
+      "Bash(curl -s -w \"\\\\n[HTTP %{http_code}]\\\\n\" \"http://localhost:3000/api/push?task=events&key=da800a3cfc975de7b78f98e5876d1ddb4c74a5b4771fa281\")",
+      "Bash(curl -s \"http://localhost:3000/api/push?task=events&key=da800a3cfc975de7b78f98e5876d1ddb4c74a5b4771fa281\")",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -X POST -w \"\\\\n[HTTP %{http_code}]\\\\n\" \"http://localhost:3000/api/push?task=nudge\")",
+      "Bash(curl -s -X POST \"http://localhost:3000/api/push?task=nudge\")"
     ]
   }
 }

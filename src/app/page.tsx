@@ -437,6 +437,16 @@ function daysBetween(aKey: string, bKey: string) {
   const b = new Date(bKey + "T00:00:00").getTime();
   return Math.round((b - a) / 86400000);
 }
+// Fire-and-forget poke at the push pipeline (/api/push?task=nudge) after a
+// push-worthy write. The delay lets the Firestore write commit before the
+// sweep reads it; the endpoint is keyless, throttled, and idempotent.
+function nudgePush(delayMs = 1200) {
+  if (typeof window === "undefined") return;
+  setTimeout(() => {
+    fetch("/api/push?task=nudge", { method: "POST" }).catch(() => {});
+  }, delayMs);
+}
+
 // Light haptic cue where supported. Silent failure everywhere else.
 function vibrate(ms: number | number[]) {
   try {
@@ -3117,6 +3127,7 @@ function MicDropSheet({
       stoppingRef.current = false;
       setStage(1);
       vibrate(16);
+      nudgePush(); // tell the city the mic is live
       recordChunk();
       secsTimerRef.current = setInterval(() => {
         setRecSecs((s) => {
@@ -4404,6 +4415,7 @@ export default function Nearhum() {
         updateDoc(doc(firestore, "drops", p.id), { pinnedTo: null, pinnedToUid: null }).catch(() => {});
         if (p.uid && p.uid !== uid) {
           addDoc(collection(firestore, "users", p.uid, "activity"), { type: "pin_listened", who: myHandle, title: p.title, at: new Date().toISOString(), unread: true }).catch(() => {});
+          nudgePush();
         }
       }
     },
@@ -4496,6 +4508,7 @@ export default function Nearhum() {
     vibrate(12);
     if (p.uid && p.uid !== uid) {
       addDoc(collection(firestore, "users", p.uid, "activity"), { type: "reaction", who: myHandle, react: key, title: p.title, at: new Date().toISOString(), unread: true }).catch(() => {});
+      nudgePush();
     }
     const r = REACTIONS.find((x) => x.key === key);
     flash(r?.label || "reacted", key === "felt" ? "heart" : key === "same" ? "target" : "spark", r?.color);
@@ -4508,6 +4521,7 @@ export default function Nearhum() {
     addDoc(collection(firestore, "users", uid, "ledger"), { label: "Hum", delta: -1, at: new Date().toISOString() }).catch(() => {});
     if (p && p.uid && p.uid !== uid) {
       addDoc(collection(firestore, "users", p.uid, "activity"), { type: "hum", who: myHandle, title: p.title, at: new Date().toISOString(), unread: true }).catch(() => {});
+      nudgePush();
     }
     flash("Hum sent", "mic", C.greenSoft);
   };
@@ -4519,6 +4533,7 @@ export default function Nearhum() {
     setDropOpen(false);
     flash("Your voice is on the block", "radio", C.green);
     setTab("feed");
+    nudgePush(); // nearby users + any pinned mention
   };
 
   /* ---- buy (WIRE Stripe) ------------------------------------------------- */
