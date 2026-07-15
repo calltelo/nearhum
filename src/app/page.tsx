@@ -25,6 +25,7 @@ import {
   arrayUnion,
   getDocs,
   runTransaction,
+  deleteField,
 } from "firebase/firestore";
 
 /* ============================================================================
@@ -322,9 +323,19 @@ type Ping = {
   ttl?: number;
   reacts: { felt: number; same: number; loud: number };
   replies: Reply[];
+  // live presence: uid → ISO timestamp of their latest "I'm listening" stamp
+  listeners?: Record<string, string>;
   distMi?: number | null;
   dist: string;
 };
+
+// Listeners stamped within this window count as "listening now" — covers
+// tabs that died without cleaning up their presence key.
+const LIVE_EAR_MS = 90000;
+function liveEars(p: Ping) {
+  const now = Date.now();
+  return Object.values(p.listeners || {}).filter((t) => now - new Date(t).getTime() < LIVE_EAR_MS).length;
+}
 type Prefs = { sound: boolean; autoplay: boolean; notif: boolean; reduceMotion: boolean };
 
 // A live Mic Drop broadcast — one doc per city, doubles as the per-city lock.
@@ -2345,7 +2356,14 @@ function FullPlayer({
         <div style={{ display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 11, color: C.dim, marginTop: 12 }}>
           <span>{fmtSecs(elapsed)}</span>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-            <I name="ear" size={11} color={C.dim} /> {fmtCount(p.plays)} listening
+            {liveEars(p) > 0 && (
+              <>
+                <Pulse color={C.green} size={6} />
+                <span style={{ color: C.greenSoft }}>{liveEars(p)} listening</span>
+                <span style={{ color: C.dimmer }}>·</span>
+              </>
+            )}
+            <I name="ear" size={11} color={C.dim} /> {fmtCount(p.plays)} heard
           </span>
           <span>{fmtSecs(p.secs)}</span>
         </div>
@@ -4013,7 +4031,7 @@ export default function Nearhum() {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [recentJoins, setRecentJoins] = useState<{ id: string; handle: string; createdAt: string }[]>([]);
   const [ledger, setLedger] = useState<{ id: string; label: string; delta: number; ago: string }[]>([]);
-  const [listens, setListens] = useState<{ id: string; dropId: string; title: string; who: string; mood: string; ago: string }[]>([]);
+  const [listens, setListens] = useState<{ id: string; dropId: string; title: string; who: string; mood: string; cost: number; ago: string }[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
 
   // ui
@@ -4124,6 +4142,7 @@ export default function Nearhum() {
           ttl: hoursLeft,
           reacts: (d.reacts as { felt: number; same: number; loud: number }) || { felt: 0, same: 0, loud: 0 },
           replies: (d.replies as Ping["replies"]) || [],
+          listeners: (d.listeners as Record<string, string>) || {},
           distMi,
           dist: distMi != null ? fmtDist(distMi) : "nearby",
         };
@@ -4403,6 +4422,7 @@ export default function Nearhum() {
             title: (l.title as string) || "—",
             who: (l.who as string) || "",
             mood: (l.mood as string) || "",
+            cost: typeof l.cost === "number" && l.cost > 0 ? l.cost : PLAY_COST,
             ago: l.at ? timeAgo(l.at as string) : "",
           };
         })
@@ -4483,6 +4503,30 @@ export default function Nearhum() {
       window.removeEventListener("focus", beat);
     };
   }, [uid]);
+
+  /* ---- live listener presence ---------------------------------------------
+     While a voice is actually playing, stamp listeners.{uid} on its drop doc
+     (refreshed every 45s); remove the stamp on pause/switch. Everyone already
+     streams drop docs, so "N listening" in the player is genuinely live.
+     Stale stamps (killed tabs) age out via LIVE_EAR_MS instead of cleanup.
+     --------------------------------------------------------------------- */
+  const listeningDropRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!uid) return;
+    const active = playing && currentId ? currentId : null;
+    const prev = listeningDropRef.current;
+    if (prev && prev !== active) {
+      updateDoc(doc(firestore, "drops", prev), { [`listeners.${uid}`]: deleteField() }).catch(() => {});
+      listeningDropRef.current = null;
+    }
+    if (!active) return;
+    listeningDropRef.current = active;
+    const stamp = () =>
+      updateDoc(doc(firestore, "drops", active), { [`listeners.${uid}`]: new Date().toISOString() }).catch(() => {});
+    stamp();
+    const iv = setInterval(stamp, 45000);
+    return () => clearInterval(iv);
+  }, [playing, currentId, uid]);
 
   /* ---- PWA install --------------------------------------------------------
      Three ways we learn a user installed:
@@ -5214,6 +5258,7 @@ export default function Nearhum() {
                         <div style={{ fontSize: 13, color: C.textDim, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.title}</div>
                         <div style={{ fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 2 }}>{l.who ? `@${l.who}` : "—"} · {l.ago}</div>
                       </div>
+                      <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: C.cyanSoft, background: hexA(C.cyan, "12"), border: `1px solid ${hexA(C.cyan, "2E")}`, borderRadius: 99, padding: "3px 10px", minWidth: 34, textAlign: "center", flexShrink: 0 }}>-{l.cost}</span>
                     </div>
                   );
                 })}
