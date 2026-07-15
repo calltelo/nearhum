@@ -273,8 +273,25 @@ type ActivityItem = {
   react?: string;
   title?: string;
   detail?: string;
+  at?: string;
   ago: string;
   unread: boolean;
+};
+
+// One row in the block pulse — the merged log of personal activity (things
+// done to YOUR voices) and block events (joins, drops, hums between others).
+type PulseItem = {
+  id: string;
+  kind: string;
+  icon: string;
+  color: string;
+  text: React.ReactNode;
+  at: string;
+  ago: string;
+  unread?: boolean;
+  personal?: boolean;
+  dropId?: string;
+  title?: string;
 };
 
 type Reply = {
@@ -3779,7 +3796,15 @@ function activityView(a: ActivityItem): { icon: string; color: string; text: Rea
   }
 }
 
-function ActivityFeed({ items, onOpen }: { items: ActivityItem[]; onOpen: (title?: string) => void }) {
+function PulseFeed({
+  items,
+  onOpenDrop,
+  onOpenTitle,
+}: {
+  items: PulseItem[];
+  onOpenDrop: (dropId: string) => void;
+  onOpenTitle: (title?: string) => void;
+}) {
   if (items.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: "70px 30px", color: C.dim }}>
@@ -3787,26 +3812,29 @@ function ActivityFeed({ items, onOpen }: { items: ActivityItem[]; onOpen: (title
           <I name="bell" size={26} color={C.dim} />
         </div>
         <div style={{ fontSize: 15, color: C.text, fontWeight: 600, marginBottom: 6 }}>Quiet for now.</div>
-        <p style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>When someone hums back, reacts, or pins you a voice, it shows up here.</p>
+        <p style={{ fontSize: 13, lineHeight: 1.6, margin: 0 }}>When the block wakes up — joins, drops, hums — the pulse shows it here.</p>
       </div>
     );
   }
   return (
     <div>
       {items.map((a) => {
-        const v = activityView(a);
-        const tappable = a.type === "reaction" || a.type === "hum" || a.type === "reply" || a.type === "pin";
+        const tappable = !!a.dropId || (a.personal && (a.kind === "reaction" || a.kind === "hum" || a.kind === "reply" || a.kind === "pin"));
         return (
           <button
             key={a.id}
-            onClick={() => tappable && onOpen(a.title)}
+            onClick={() => {
+              if (!tappable) return;
+              if (a.dropId) onOpenDrop(a.dropId);
+              else onOpenTitle(a.title);
+            }}
             style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 6px", background: a.unread ? hexA(C.green, "07") : "transparent", border: "none", borderRadius: 10, borderBottom: `1px solid ${C.lineSoft}`, cursor: tappable ? "pointer" : "default", textAlign: "left", marginBottom: 2 }}
           >
-            <span style={{ width: 38, height: 38, borderRadius: 11, background: hexA(v.color, "16"), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <I name={v.icon} size={17} color={v.color} />
+            <span style={{ width: 38, height: 38, borderRadius: 11, background: hexA(a.color, a.personal ? "16" : "0E"), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <I name={a.icon} size={17} color={a.color} />
             </span>
             <span style={{ flex: 1, minWidth: 0, paddingTop: 1 }}>
-              <span style={{ display: "block", fontSize: 13.5, color: C.text, lineHeight: 1.45 }}>{v.text}</span>
+              <span style={{ display: "block", fontSize: 13.5, color: a.personal ? C.text : C.textDim, lineHeight: 1.45 }}>{a.text}</span>
               <span style={{ display: "block", fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 4 }}>{a.ago}</span>
             </span>
             {a.unread && <span style={{ width: 8, height: 8, borderRadius: 99, background: C.green, marginTop: 6, flexShrink: 0 }} />}
@@ -3983,6 +4011,7 @@ export default function Nearhum() {
   // data
   const [rawDrops, setRawDrops] = useState<Record<string, unknown>[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [recentJoins, setRecentJoins] = useState<{ id: string; handle: string; createdAt: string }[]>([]);
   const [ledger, setLedger] = useState<{ id: string; label: string; delta: number; ago: string }[]>([]);
   const [listens, setListens] = useState<{ id: string; dropId: string; title: string; who: string; mood: string; ago: string }[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
@@ -4155,6 +4184,48 @@ export default function Nearhum() {
   }, [pings]);
   const unread = activity.filter((a) => a.unread).length;
 
+  /* ---- the block pulse ----------------------------------------------------
+     One chronological log: your personal activity (bright, tappable, unread
+     dots) merged with the block's heartbeat — who joined, who dropped, who
+     hummed back at whom. Block events come free from data already synced.
+     --------------------------------------------------------------------- */
+  const pulse: PulseItem[] = useMemo(() => {
+    const items: PulseItem[] = [];
+    for (const a of activity) {
+      const v = activityView(a);
+      items.push({
+        id: `act-${a.id}`, kind: a.type, icon: v.icon, color: v.color, text: v.text,
+        at: a.at || "", ago: a.ago, unread: a.unread, personal: true, title: a.title,
+      });
+    }
+    for (const j of recentJoins) {
+      if (j.id === uid || !j.createdAt) continue;
+      items.push({
+        id: `join-${j.id}`, kind: "join", icon: "user", color: C.violet,
+        text: <>@{j.handle} joined nearhum</>, at: j.createdAt, ago: timeAgo(j.createdAt),
+      });
+    }
+    for (const p of pings) {
+      if (p.uid !== uid && p.createdAt) {
+        items.push({
+          id: `drop-${p.id}`, kind: "drop", icon: "radio", color: MOOD[p.mood] || C.green,
+          text: <>@{p.handle} dropped &quot;{p.title}&quot;</>, at: p.createdAt, ago: timeAgo(p.createdAt), dropId: p.id,
+        });
+      }
+      for (const r of p.replies || []) {
+        if (!r.createdAt) continue;
+        if (r.uid === uid) continue; // your own hums aren't news to you
+        if (p.uid === uid) continue; // hums on YOUR drops arrive via personal activity
+        items.push({
+          id: `hum-${p.id}-${r.id || r.createdAt}`, kind: "hum", icon: "mic", color: C.greenSoft,
+          text: <>@{r.handle} hummed back on @{p.handle}&apos;s &quot;{p.title}&quot;</>,
+          at: r.createdAt, ago: timeAgo(r.createdAt), dropId: p.id,
+        });
+      }
+    }
+    return items.filter((x) => x.at).sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 50);
+  }, [activity, recentJoins, pings, uid]);
+
   /* ---- auth + user doc --------------------------------------------------- */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -4271,12 +4342,32 @@ export default function Nearhum() {
             react: a.react as string | undefined,
             title: a.title as string | undefined,
             detail: a.detail as string | undefined,
+            at: a.at as string | undefined,
             ago: a.at ? timeAgo(a.at as string) : "",
             unread: !!a.unread,
           };
         })
       );
     });
+    return () => unsub();
+  }, [uid]);
+
+  /* ---- recent joins (for the block pulse) --------------------------------- */
+  useEffect(() => {
+    if (!uid) return;
+    const q = query(collection(firestore, "users"), orderBy("createdAt", "desc"), limit(10));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setRecentJoins(
+          snap.docs.map((dd) => {
+            const u = dd.data();
+            return { id: dd.id, handle: (u.handle as string) || "someone", createdAt: (u.createdAt as string) || "" };
+          })
+        );
+      },
+      () => {} // rules may tighten later; the pulse just loses join events
+    );
     return () => unsub();
   }, [uid]);
 
@@ -4992,8 +5083,11 @@ export default function Nearhum() {
         {/* ---------------- ACTIVITY ---------------- */}
         {tab === "activity" && (
           <>
-            <div style={{ fontSize: 24, fontWeight: 780, color: C.text, letterSpacing: -0.4, marginBottom: 4 }}>Activity</div>
-            <p style={{ fontFamily: MONO, fontSize: 11, color: C.dim, margin: "0 0 18px" }}>hums, pins and reactions on your voices</p>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              <div style={{ fontSize: 24, fontWeight: 780, color: C.text, letterSpacing: -0.4 }}>The Pulse</div>
+              <LiveDot label="LIVE" />
+            </div>
+            <p style={{ fontFamily: MONO, fontSize: 11, color: C.dim, margin: "0 0 18px" }}>the heartbeat of your block — joins, drops, hums</p>
             {streak > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 12, background: `linear-gradient(135deg, ${hexA(C.amber, "16")}, ${C.card})`, border: `1px solid ${hexA(C.amber, "33")}`, borderRadius: 16, padding: "14px 16px", marginBottom: 18 }}>
                 <I name="flame" size={26} color={C.amber} fill={hexA(C.amber, "44")} />
@@ -5003,9 +5097,10 @@ export default function Nearhum() {
                 </div>
               </div>
             )}
-            <ActivityFeed
-              items={activity}
-              onOpen={(title) => {
+            <PulseFeed
+              items={pulse}
+              onOpenDrop={(dropId) => selectVoice(dropId)}
+              onOpenTitle={(title) => {
                 const p = pings.find((x) => x.title === title);
                 if (p) selectVoice(p.id);
                 else flash("That voice has faded", "clock", C.dim);
