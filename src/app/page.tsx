@@ -289,6 +289,7 @@ type PulseItem = {
   text: React.ReactNode;
   at: string;
   ago: string;
+  meta?: React.ReactNode; // extra stats rendered after ago (e.g. listen count)
   unread?: boolean;
   personal?: boolean;
   dropId?: string;
@@ -3865,7 +3866,7 @@ function PulseFeed({
             </span>
             <span style={{ flex: 1, minWidth: 0, paddingTop: 1 }}>
               <span style={{ display: "block", fontSize: 13.5, color: a.personal ? C.text : C.textDim, lineHeight: 1.45 }}>{a.text}</span>
-              <span style={{ display: "block", fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 4 }}>{a.ago}</span>
+              <span style={{ display: "block", fontFamily: MONO, fontSize: 10, color: C.dimmer, marginTop: 4 }}>{a.ago}{a.meta}</span>
             </span>
             {a.unread && <span style={{ width: 8, height: 8, borderRadius: 99, background: C.green, marginTop: 6, flexShrink: 0 }} />}
           </button>
@@ -4239,9 +4240,18 @@ export default function Nearhum() {
     }
     for (const p of pings) {
       if (p.uid !== uid && p.createdAt) {
+        const live = liveEars(p);
         items.push({
           id: `drop-${p.id}`, kind: "drop", icon: "radio", color: MOOD[p.mood] || C.green,
           text: <>@{p.handle} dropped &quot;{p.title}&quot;</>, at: p.createdAt, ago: timeAgo(p.createdAt), dropId: p.id,
+          meta: (
+            <>
+              <span style={{ color: C.dim }}> · </span>
+              <I name="ear" size={9} color={C.dim} style={{ verticalAlign: "-1px" }} />
+              <span style={{ color: C.dim }}> {fmtCount(p.plays)}</span>
+              {live > 0 && <span style={{ color: C.greenSoft }}> · {live} listening</span>}
+            </>
+          ),
         });
       }
       for (const r of p.replies || []) {
